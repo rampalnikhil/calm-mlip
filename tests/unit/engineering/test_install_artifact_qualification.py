@@ -37,8 +37,8 @@ def test_packaging_contract_is_exact_and_current() -> None:
     assert result["conda_profile"] == "local_source_base_package"
     assert result["conda_source_kind"] == "local_path"
     assert result["source_environment_schema"] == "calm.source_environments.v1"
-    assert result["source_environment_recipe_count"] == 4
-    assert result["source_environment_provider_count"] == 5
+    assert result["source_environment_recipe_count"] == 11
+    assert result["source_environment_provider_count"] == 12
     assert result["minimum_dependency_track"] == [
         "ase",
         "numpy",

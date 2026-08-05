@@ -29,7 +29,7 @@ def test_conda_recipe_contract_is_exact_and_current() -> None:
     assert result["license_files"] == ["LICENSE", "NOTICE"]
     assert result["run_requirements"] == [
         "python >=3.10,<3.13",
-        "numpy >=1.26,<3",
+        "numpy >=1.26,<2.5",
         "sqlalchemy >=2.0,<3",
     ]
     assert payload["dependency_policy"]["science"] == "not_bundled"

@@ -21,7 +21,14 @@
     "calm-chgnet.yml",
     "calm-grace.yml",
     "calm-mace.yml",
+    "calm-matgl.yml",
+    "calm-mattersim.yml",
+    "calm-nequip.yml",
+    "calm-orb.yml",
+    "calm-petmad.yml",
     "calm-science.yml",
+    "calm-sevenn.yml",
+    "calm-uma.yml",
     "validate_environment.py"
   ],
   "provider_profiles": {
@@ -85,6 +92,90 @@
       "recipe": "calm-mace.yml",
       "required_imports": [],
       "runtime_scope": "dependency_and_registry_availability"
+    },
+    "matgl": {
+      "distribution_imports": {
+        "matgl": "matgl"
+      },
+      "environment_name": "calm-matgl",
+      "external_runtime_required": false,
+      "extra": "matgl",
+      "import_any": [],
+      "recipe": "calm-matgl.yml",
+      "required_imports": [],
+      "runtime_scope": "dependency_and_registry_availability"
+    },
+    "mattersim": {
+      "distribution_imports": {
+        "mattersim": "mattersim"
+      },
+      "environment_name": "calm-mattersim",
+      "external_runtime_required": false,
+      "extra": "mattersim",
+      "import_any": [],
+      "recipe": "calm-mattersim.yml",
+      "required_imports": [],
+      "runtime_scope": "dependency_and_registry_availability"
+    },
+    "nequip": {
+      "distribution_imports": {
+        "nequip": "nequip"
+      },
+      "environment_name": "calm-nequip",
+      "external_runtime_required": false,
+      "extra": "nequip",
+      "import_any": [],
+      "recipe": "calm-nequip.yml",
+      "required_imports": [],
+      "runtime_scope": "dependency_and_registry_availability"
+    },
+    "orb": {
+      "distribution_imports": {
+        "orb-models": "orb_models"
+      },
+      "environment_name": "calm-orb",
+      "external_runtime_required": false,
+      "extra": "orb",
+      "import_any": [],
+      "recipe": "calm-orb.yml",
+      "required_imports": [],
+      "runtime_scope": "dependency_and_registry_availability"
+    },
+    "petmad": {
+      "distribution_imports": {
+        "pet-mad": "pet_mad"
+      },
+      "environment_name": "calm-petmad",
+      "external_runtime_required": false,
+      "extra": "petmad",
+      "import_any": [],
+      "recipe": "calm-petmad.yml",
+      "required_imports": [],
+      "runtime_scope": "dependency_and_registry_availability"
+    },
+    "sevenn": {
+      "distribution_imports": {
+        "sevenn": "sevenn"
+      },
+      "environment_name": "calm-sevenn",
+      "external_runtime_required": false,
+      "extra": "sevenn",
+      "import_any": [],
+      "recipe": "calm-sevenn.yml",
+      "required_imports": [],
+      "runtime_scope": "dependency_and_registry_availability"
+    },
+    "uma": {
+      "distribution_imports": {
+        "fairchem-core": "fairchem"
+      },
+      "environment_name": "calm-uma",
+      "external_runtime_required": false,
+      "extra": "uma",
+      "import_any": [],
+      "recipe": "calm-uma.yml",
+      "required_imports": [],
+      "runtime_scope": "dependency_and_registry_availability"
     }
   },
   "recipe_policy": {
@@ -112,9 +203,37 @@
       "environment_name": "calm-mace",
       "provider_extra": "mace"
     },
+    "calm-matgl.yml": {
+      "environment_name": "calm-matgl",
+      "provider_extra": "matgl"
+    },
+    "calm-mattersim.yml": {
+      "environment_name": "calm-mattersim",
+      "provider_extra": "mattersim"
+    },
+    "calm-nequip.yml": {
+      "environment_name": "calm-nequip",
+      "provider_extra": "nequip"
+    },
+    "calm-orb.yml": {
+      "environment_name": "calm-orb",
+      "provider_extra": "orb"
+    },
+    "calm-petmad.yml": {
+      "environment_name": "calm-petmad",
+      "provider_extra": "petmad"
+    },
     "calm-science.yml": {
       "environment_name": "calm-science",
       "provider_extra": null
+    },
+    "calm-sevenn.yml": {
+      "environment_name": "calm-sevenn",
+      "provider_extra": "sevenn"
+    },
+    "calm-uma.yml": {
+      "environment_name": "calm-uma",
+      "provider_extra": "uma"
     }
   },
   "schema_version": "calm.source_environments.v1",

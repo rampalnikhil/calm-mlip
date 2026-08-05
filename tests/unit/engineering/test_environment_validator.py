@@ -133,6 +133,6 @@ def test_validator_rejects_ambiguous_or_unknown_selection() -> None:
     with pytest.raises(ValueError, match="mutually exclusive"):
         module.validate_environment(profile="base", provider="ase")
     with pytest.raises(ValueError, match="unknown provider"):
-        module.validate_environment(provider="orb")
+        module.validate_environment(provider="m3gnet")
     with pytest.raises(ValueError, match="unknown profile"):
         module.validate_environment(profile="full")

@@ -18,6 +18,13 @@ REQUIRED_FILES = (
     "environments/calm-chgnet.yml",
     "environments/calm-grace.yml",
     "environments/calm-mace.yml",
+    "environments/calm-matgl.yml",
+    "environments/calm-mattersim.yml",
+    "environments/calm-nequip.yml",
+    "environments/calm-orb.yml",
+    "environments/calm-petmad.yml",
+    "environments/calm-sevenn.yml",
+    "environments/calm-uma.yml",
     "environments/calm-science.yml",
     "environments/validate_environment.py",
     "engineering/architecture/current-source-environments.json",
@@ -102,7 +109,7 @@ def test_source_environment_checker_rejects_dependency_projection_drift(
     pyproject = root / "pyproject.toml"
     pyproject.write_text(
         pyproject.read_text(encoding="utf-8").replace(
-            '  "spglib>=2.6,<3"',
+            '  "spglib>=2.6,<2.7"',
             '  "spglib>=2.7,<3"',
             1,
         ),

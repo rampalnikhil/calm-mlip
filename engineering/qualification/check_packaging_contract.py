@@ -49,11 +49,11 @@ MINIMUM_CONSTRAINTS = (
 )
 EXPECTED_PYTHON = ">=3.10,<3.13"
 EXPECTED_BASE = {"numpy", "sqlalchemy"}
-EXPECTED_BASE_REQUIREMENTS = {"numpy>=1.26,<3", "sqlalchemy>=2.0,<3"}
+EXPECTED_BASE_REQUIREMENTS = {"numpy>=1.26,<2.5", "sqlalchemy>=2.0,<3"}
 EXPECTED_SCIENCE_REQUIREMENTS = {
     "scipy>=1.11.2,<2",
     "ase>=3.25,<4",
-    "spglib>=2.6,<3",
+    "spglib>=2.6,<2.7",
 }
 EXPECTED_MINIMUM_REQUIREMENTS = {
     "numpy==1.26.0",
@@ -72,8 +72,22 @@ EXPECTED_EXTRAS = {
     "grace",
     "mace",
     "chgnet",
+    "sevenn",
+    "mattersim",
+    "orb",
+    "matgl",
+    "nequip",
+    "uma",
+    "petmad",
 }
 EXTRA_DEPENDENCIES = {
+    "sevenn": {"sevenn"},
+    "mattersim": {"mattersim"},
+    "orb": {"orb-models"},
+    "matgl": {"matgl"},
+    "nequip": {"nequip"},
+    "uma": {"fairchem-core"},
+    "petmad": {"pet-mad"},
     "science": {"scipy", "ase", "spglib"},
     "dataframe": {"pandas"},
     "plot": {"matplotlib"},
@@ -82,7 +96,7 @@ EXTRA_DEPENDENCIES = {
     "mace": {"mace-torch"},
     "chgnet": {"chgnet"},
 }
-FORBIDDEN_DISTRIBUTIONS = {"lammps", "m3gnet", "m3gnet-torch", "matgl"}
+FORBIDDEN_DISTRIBUTIONS = {"lammps", "m3gnet", "m3gnet-torch"}
 FORBIDDEN_LEGACY_ROOT_FILES = (".flake8", "setup.py")
 REQUIRED_DEV_DISTRIBUTIONS = {
     "pytest",

@@ -155,7 +155,20 @@ def test_supported_scope_tracks_every_public_energy_formula() -> None:
 def test_calculator_support_tracks_the_live_registry() -> None:
     text = _text("calculator-support.md")
     families = default_registry().families()
-    assert families == ("ase", "chgnet", "grace", "lammps", "mace")
+    assert families == (
+        "ase",
+        "chgnet",
+        "grace",
+        "lammps",
+        "mace",
+        "matgl",
+        "mattersim",
+        "nequip",
+        "orb",
+        "petmad",
+        "sevenn",
+        "uma",
+    )
     for family in families:
         assert f"`{family}`" in text
         assert f"--provider {family}" in text

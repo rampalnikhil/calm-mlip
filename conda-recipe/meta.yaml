@@ -21,7 +21,7 @@ requirements:
     - wheel
   run:
     - python >=3.10,<3.13
-    - numpy >=1.26,<3
+    - numpy >=1.26,<2.5
     - sqlalchemy >=2.0,<3
 
 test:

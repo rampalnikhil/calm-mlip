@@ -68,7 +68,7 @@ def _record() -> dict[str, object]:
         "build_number": 0,
         "subdir": "noarch",
         "depends": [
-            "numpy >=1.26,<3",
+            "numpy >=1.26,<2.5",
             "python >=3.10,<3.13",
             "sqlalchemy >=2.0,<3",
         ],

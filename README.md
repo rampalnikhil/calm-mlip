@@ -105,6 +105,8 @@ Registered calculator families are `ase`, `chgnet`, `grace`, `mace`, and
 `lammps`. Registration, dependency availability, qualification evidence, and
 scientific suitability are separate concerns.
 
+Additional registered calculator families are `sevenn` (SevenNet), `mattersim` (MatterSim), `orb` (Orb), `matgl` (MatGL/M3GNet-architecture), `nequip` (NequIP/Allegro), `uma` (Meta/FAIR-Chem UMA), and `petmad` (PET-MAD).
+
 The baseline `ase` and `lammps` boundaries start from `calm-science.yml`;
 LAMMPS additionally requires an external runtime and compatible potential
 files. CALM maintains one source-checkout recipe for each registered pip-managed

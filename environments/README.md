@@ -100,9 +100,11 @@ python -m pip install -e ".[docs]"
 
 ## Frameworks without registered CALM providers
 
-M3GNet, MatGL, SevenNet, NequIP/Allegro, MatterSim, and Orb are not registered
-`Potential.family` values in the current CALM contract. CALM therefore does not
-maintain source environment recipes for them. An independently managed
+SevenNet (`sevenn`), MatterSim (`mattersim`), Orb (`orb`), MatGL (`matgl`),
+NequIP/Allegro (`nequip`), UMA (`uma`), and PET-MAD (`petmad`) are registered
+`Potential.family` values with their own source environment recipes.
+Native M3GNet is not registered in the current CALM contract, and CALM does not
+maintain source environment recipes for it; use the `matgl` family instead. An independently managed
 framework environment does not create a CALM provider or broaden CALM's
 qualification claims.
 

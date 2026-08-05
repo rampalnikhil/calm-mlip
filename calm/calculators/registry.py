@@ -212,12 +212,26 @@ def default_registry() -> CalculatorRegistry:
             GRACEProvider,
             LAMMPSProvider,
             MACEProvider,
+            MatGLProvider,
+            MatterSimProvider,
+            NequIPProvider,
+            OrbProvider,
+            PETMADProvider,
+            SevenNetProvider,
+            UMAProvider,
         )
 
         reg.register(MACEProvider())
         reg.register(CHGNetProvider())
         reg.register(GRACEProvider())
         reg.register(LAMMPSProvider())
+        reg.register(SevenNetProvider())
+        reg.register(MatterSimProvider())
+        reg.register(OrbProvider())
+        reg.register(MatGLProvider())
+        reg.register(NequIPProvider())
+        reg.register(UMAProvider())
+        reg.register(PETMADProvider())
 
         _DEFAULT_REGISTRY = reg
     return _DEFAULT_REGISTRY

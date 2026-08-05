@@ -452,6 +452,17 @@
       "qualification_status": "registered_unqualified"
     },
     {
+      "family": "lammps",
+      "required_evidence": [
+        "construction",
+        "relaxation",
+        "energy",
+        "runtime_identity",
+        "potential_identity"
+      ],
+      "qualification_status": "registered_unqualified"
+    },
+    {
       "family": "mace",
       "required_evidence": [
         "construction",
@@ -463,13 +474,79 @@
       "qualification_status": "registered_unqualified"
     },
     {
-      "family": "lammps",
+      "family": "matgl",
       "required_evidence": [
         "construction",
         "relaxation",
         "energy",
-        "runtime_identity",
-        "potential_identity"
+        "model_identity",
+        "device"
+      ],
+      "qualification_status": "registered_unqualified"
+    },
+    {
+      "family": "mattersim",
+      "required_evidence": [
+        "construction",
+        "relaxation",
+        "energy",
+        "model_identity",
+        "device"
+      ],
+      "qualification_status": "registered_unqualified"
+    },
+    {
+      "family": "nequip",
+      "required_evidence": [
+        "construction",
+        "relaxation",
+        "energy",
+        "model_identity",
+        "device"
+      ],
+      "qualification_status": "registered_unqualified"
+    },
+    {
+      "family": "orb",
+      "required_evidence": [
+        "construction",
+        "relaxation",
+        "energy",
+        "model_identity",
+        "device"
+      ],
+      "qualification_status": "registered_unqualified"
+    },
+    {
+      "family": "petmad",
+      "required_evidence": [
+        "construction",
+        "relaxation",
+        "energy",
+        "model_identity",
+        "device"
+      ],
+      "qualification_status": "registered_unqualified"
+    },
+    {
+      "family": "sevenn",
+      "required_evidence": [
+        "construction",
+        "relaxation",
+        "energy",
+        "model_identity",
+        "device"
+      ],
+      "qualification_status": "registered_unqualified"
+    },
+    {
+      "family": "uma",
+      "required_evidence": [
+        "construction",
+        "relaxation",
+        "energy",
+        "model_identity",
+        "device"
       ],
       "qualification_status": "registered_unqualified"
     }

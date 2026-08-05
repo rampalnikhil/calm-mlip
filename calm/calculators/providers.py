@@ -441,3 +441,459 @@ class LAMMPSProvider(CalculatorProvider):
         raise CalculatorSpecError(
             f"Unknown LAMMPS backend {backend!r}. Expected exactly 'run' or 'lib'."
         )
+
+
+class SevenNetProvider(CalculatorProvider):
+    """Provider for SevenNet foundation models via ``sevenn.calculator``."""
+
+    DEFAULT_MODEL = "7net-0"
+
+    @property
+    def family(self) -> str:
+        return "sevenn"
+
+    def describe(self) -> str:
+        return "SevenNet foundation models via sevenn.calculator.SevenNetCalculator"
+
+    def required_extras(self) -> tuple[str, ...]:
+        return ("sevenn",)
+
+    def is_available(self) -> bool:
+        return importlib.util.find_spec("sevenn") is not None
+
+    def normalize_spec(self, spec: CalculatorSpec) -> CalculatorSpec:
+        model = (spec.model or "").strip()
+        if not model or model == "default":
+            return spec.replace(model=self.DEFAULT_MODEL)
+        return spec
+
+    def create(self, spec: CalculatorSpec) -> Any:
+        spec = self.normalize_spec(spec)
+        if not self.is_available():
+            raise OptionalDependencyError(
+                "SevenNet is not installed. Install it (e.g. `pip install sevenn`) to use SevenNet calculators."
+            )
+        from sevenn.calculator import SevenNetCalculator
+
+        options = spec.options_dict()
+        try:
+            return SevenNetCalculator(model=spec.model, device=spec.device or "cpu", **options)
+        except TypeError as e:
+            raise CalculatorBuildError(
+                f"Failed to construct SevenNet calculator (model={spec.model!r}). "
+                f"Unsupported option keys: {sorted(options)}"
+            ) from e
+
+
+class MatterSimProvider(CalculatorProvider):
+    """Provider for MatterSim foundation models via ``mattersim.forcefield``."""
+
+    DEFAULT_MODEL = "default"
+
+    @property
+    def family(self) -> str:
+        return "mattersim"
+
+    def describe(self) -> str:
+        return "MatterSim foundation models via mattersim.forcefield.MatterSimCalculator"
+
+    def required_extras(self) -> tuple[str, ...]:
+        return ("mattersim",)
+
+    def is_available(self) -> bool:
+        return importlib.util.find_spec("mattersim") is not None
+
+    def create(self, spec: CalculatorSpec) -> Any:
+        if not self.is_available():
+            raise OptionalDependencyError(
+                "MatterSim is not installed. Install it (e.g. `pip install mattersim`) to use MatterSim calculators."
+            )
+        from mattersim.forcefield import MatterSimCalculator
+
+        options = spec.options_dict()
+        model = (spec.model or "").strip()
+        if model and model != "default":
+            options.setdefault("load_path", model)
+        try:
+            return MatterSimCalculator(device=spec.device or "cpu", **options)
+        except TypeError as e:
+            raise CalculatorBuildError(
+                f"Failed to construct MatterSim calculator (model={spec.model!r}). "
+                f"Unsupported option keys: {sorted(options)}"
+            ) from e
+
+
+class OrbProvider(CalculatorProvider):
+    """Provider for Orb foundation models via ``orb_models``.
+
+    ``spec.model`` names a pretrained factory in ``orb_models.forcefield.pretrained``
+    (dashes are normalized to underscores, e.g. ``orb-v3-conservative-inf-omat``).
+    ``torch.compile`` is disabled by default: it fails on CPU-only nodes and can
+    be re-enabled per-spec with ``options={"compile": True}``.
+    """
+
+    DEFAULT_MODEL = "orb-v3-conservative-inf-omat"
+
+    @property
+    def family(self) -> str:
+        return "orb"
+
+    def describe(self) -> str:
+        return "Orb foundation models via orb_models pretrained factories"
+
+    def required_extras(self) -> tuple[str, ...]:
+        return ("orb-models",)
+
+    def is_available(self) -> bool:
+        return importlib.util.find_spec("orb_models") is not None
+
+    def normalize_spec(self, spec: CalculatorSpec) -> CalculatorSpec:
+        model = (spec.model or "").strip()
+        if not model or model == "default":
+            return spec.replace(model=self.DEFAULT_MODEL)
+        return spec
+
+    def create(self, spec: CalculatorSpec) -> Any:
+        spec = self.normalize_spec(spec)
+        if not self.is_available():
+            raise OptionalDependencyError(
+                "Orb is not installed. Install it (e.g. `pip install orb-models`) to use Orb calculators."
+            )
+        from orb_models.forcefield import pretrained
+        from orb_models.forcefield.inference.calculator import ORBCalculator
+
+        factory_name = spec.model.replace("-", "_")
+        factory = getattr(pretrained, factory_name, None)
+        if factory is None:
+            raise CalculatorBuildError(
+                f"Unknown Orb pretrained model {spec.model!r}: no factory "
+                f"orb_models.forcefield.pretrained.{factory_name}"
+            )
+        options = spec.options_dict()
+        device = spec.device or "cpu"
+        compile_flag = options.pop("compile", False)
+        try:
+            model, adapter = factory(device=device, compile=compile_flag)
+            return ORBCalculator(model, adapter, device=device, **options)
+        except TypeError as e:
+            raise CalculatorBuildError(
+                f"Failed to construct Orb calculator (model={spec.model!r}). "
+                f"Unsupported option keys: {sorted(options)}"
+            ) from e
+
+
+class MatGLProvider(CalculatorProvider):
+    """Provider for MatGL (M3GNet/CHGNet-arch) models via ``matgl.load_model``."""
+
+    DEFAULT_MODEL = "M3GNet-PES-MatPES-PBE-2025.2"
+
+    @property
+    def family(self) -> str:
+        return "matgl"
+
+    def describe(self) -> str:
+        return "MatGL pretrained PES models via matgl.load_model + PESCalculator"
+
+    def required_extras(self) -> tuple[str, ...]:
+        return ("matgl",)
+
+    def is_available(self) -> bool:
+        return importlib.util.find_spec("matgl") is not None
+
+    def normalize_spec(self, spec: CalculatorSpec) -> CalculatorSpec:
+        model = (spec.model or "").strip()
+        if not model or model == "default":
+            return spec.replace(model=self.DEFAULT_MODEL)
+        return spec
+
+    def create(self, spec: CalculatorSpec) -> Any:
+        spec = self.normalize_spec(spec)
+        if not self.is_available():
+            raise OptionalDependencyError(
+                "MatGL is not installed. Install it (e.g. `pip install matgl`) to use MatGL calculators."
+            )
+        import matgl
+        from matgl.ext.ase import PESCalculator
+
+        options = spec.options_dict()
+        try:
+            return PESCalculator(matgl.load_model(spec.model), **options)
+        except TypeError as e:
+            raise CalculatorBuildError(
+                f"Failed to construct MatGL calculator (model={spec.model!r}). "
+                f"Unsupported option keys: {sorted(options)}"
+            ) from e
+
+
+class NequIPProvider(CalculatorProvider):
+    """Provider for NequIP/Allegro models in two modes.
+
+    1. **Foundation models**: ``spec.model`` is a nequip.net registry
+       identifier (``nequip.net:mir-group/NequIP-OAM-S:0.1``) or a known
+       shorthand (``NequIP-OAM-S``, ``Allegro-OAM-L``, ...). The provider
+       invokes ``nequip-compile --mode aotinductor --target ase`` to
+       download (Zenodo, CC-BY-4.0) and compile for the requested device,
+       caching under ``$XDG_CACHE_HOME/calm-nequip`` (compile on the
+       hardware class where inference runs). LAMMPS deployment uses
+       separately compiled ``--target pair_allegro``/ML-IAP artifacts.
+    2. **Bespoke models**: ``spec.model`` is a filesystem path to an
+       existing compiled artifact — a portable TorchScript
+       ``.nequip.pth`` or a device-specific AOTInductor ``.nequip.pt2``
+       — e.g. a lab-trained universal Allegro model.
+
+    Both modes end in ``NequIPCalculator.from_compiled_model``; the
+    resolved artifact path participates in run identity.
+    """
+
+    FOUNDATION_MODELS = {
+        "NequIP-OAM-S": "nequip.net:mir-group/NequIP-OAM-S:0.1",
+        "NequIP-OAM-M": "nequip.net:mir-group/NequIP-OAM-M:0.1",
+        "NequIP-OAM-L": "nequip.net:mir-group/NequIP-OAM-L:0.1",
+        "NequIP-OAM-XL": "nequip.net:mir-group/NequIP-OAM-XL:0.1",
+        "NequIP-MP-L": "nequip.net:mir-group/NequIP-MP-L:0.1",
+        "Allegro-OAM-L": "nequip.net:mir-group/Allegro-OAM-L:0.1",
+        "Allegro-MP-L": "nequip.net:mir-group/Allegro-MP-L:0.1",
+    }
+
+    @property
+    def family(self) -> str:
+        return "nequip"
+
+    def describe(self) -> str:
+        return "NequIP/Allegro compiled models via nequip.integrations.ase.NequIPCalculator"
+
+    def required_extras(self) -> tuple[str, ...]:
+        return ("nequip",)
+
+    def is_available(self) -> bool:
+        return importlib.util.find_spec("nequip") is not None
+
+    def create(self, spec: CalculatorSpec) -> Any:
+        if not self.is_available():
+            raise OptionalDependencyError(
+                "NequIP is not installed. Install it (e.g. `pip install nequip`) to use NequIP/Allegro calculators."
+            )
+        model = (spec.model or "").strip()
+        if not model or model == "default":
+            raise CalculatorBuildError(
+                "NequIPProvider requires spec.model: either a nequip.net "
+                "foundation-model name (e.g. 'Allegro-OAM-L') or a path to a "
+                "compiled artifact (.nequip.pth / .nequip.pt2). Known "
+                f"foundation names: {sorted(self.FOUNDATION_MODELS)}"
+            )
+
+        registry_id = self.FOUNDATION_MODELS.get(model) or (
+            model if model.startswith("nequip.net:") else None
+        )
+        if registry_id is not None:
+            path = self._compiled_foundation_artifact(registry_id, spec.device or "cpu")
+        else:
+            path = Path(model).expanduser()
+            if not path.exists():
+                raise CalculatorBuildError(
+                    f"NequIP model {model!r} is neither a known foundation-model "
+                    f"name ({sorted(self.FOUNDATION_MODELS)}), a nequip.net: "
+                    "registry id, nor an existing compiled-artifact path."
+                )
+
+        from nequip.integrations.ase import NequIPCalculator
+
+        options = spec.options_dict()
+        try:
+            return NequIPCalculator.from_compiled_model(
+                compile_path=str(path),
+                device=spec.device or "cpu",
+                **options,
+            )
+        except TypeError as e:
+            raise CalculatorBuildError(
+                f"Failed to construct NequIP calculator from {path}. "
+                f"Unsupported option keys: {sorted(options)}"
+            ) from e
+
+
+    def _compiled_foundation_artifact(self, registry_id: str, device: str) -> Path:
+        """Return a cached compiled artifact for a nequip.net registry id.
+
+        Compiles on first use via ``nequip-compile``. TorchScript mode is
+        used for CPU (portable across nodes); AOTInductor for GPU devices
+        (device-specific, matching nequip.net guidance to compile on the
+        inference hardware).
+        """
+        import os
+        import subprocess
+
+        cache_root = Path(
+            os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")
+        ) / "calm-nequip"
+        cache_root.mkdir(parents=True, exist_ok=True)
+
+        safe = registry_id.replace("nequip.net:", "").replace("/", "__").replace(":", "__")
+        # AOTInductor is the only compile mode on torch >= 2.10 (TorchScript
+        # compilation was removed upstream). The artifact is device-specific,
+        # so the cache key includes the device. Note the --target distinction:
+        # this provider compiles for ASE; LAMMPS deployment (pair_allegro /
+        # ML-IAP) uses separately compiled --target artifacts.
+        mode = "aotinductor"
+        artifact = cache_root / f"{safe}__{device}.nequip.pt2"
+        if artifact.exists():
+            return artifact
+
+        cmd = [
+            "nequip-compile",
+            registry_id,
+            str(artifact),
+            "--mode",
+            mode,
+            "--device",
+            device,
+            "--target",
+            "ase",
+        ]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        except FileNotFoundError as e:
+            raise OptionalDependencyError(
+                "nequip-compile CLI not found; is the nequip package installed in this environment?"
+            ) from e
+        if proc.returncode != 0 or not artifact.exists():
+            tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-8:]
+            raise CalculatorBuildError(
+                f"nequip-compile failed for {registry_id!r} (device={device!r}):\n"
+                + "\n".join(tail)
+            )
+        return artifact
+
+
+class UMAProvider(CalculatorProvider):
+    """Provider for Meta/FAIR-Chem UMA models via ``fairchem-core``.
+
+    ``spec.model`` is a UMA checkpoint name (e.g. ``uma-s-1p1``,
+    ``uma-m-1p1``). UMA is multi-task: the same checkpoint serves
+    different scientific domains, so the task head must be chosen
+    explicitly via ``spec.options["task"]`` (e.g. ``omat`` for inorganic
+    materials, ``omol`` molecules, ``oc20`` catalysis, ``odac`` MOFs,
+    ``omc`` molecular crystals). CALM does not default this scientific
+    choice.
+
+    UMA checkpoints are license-gated on Hugging Face: each user must
+    accept the model license and authenticate (``huggingface-cli login``)
+    before first download.
+    """
+
+    VALID_TASKS = ("omat", "omol", "oc20", "odac", "omc")
+
+    @property
+    def family(self) -> str:
+        return "uma"
+
+    def describe(self) -> str:
+        return "Meta/FAIR-Chem UMA models via fairchem.core.FAIRChemCalculator"
+
+    def required_extras(self) -> tuple[str, ...]:
+        return ("fairchem-core",)
+
+    def is_available(self) -> bool:
+        return importlib.util.find_spec("fairchem") is not None
+
+    def create(self, spec: CalculatorSpec) -> Any:
+        if not self.is_available():
+            raise OptionalDependencyError(
+                "fairchem-core is not installed. Install it (e.g. `pip install fairchem-core`) "
+                "to use UMA calculators."
+            )
+        model = (spec.model or "").strip()
+        if not model or model == "default":
+            raise CalculatorBuildError(
+                "UMAProvider requires spec.model to name a UMA checkpoint (e.g. 'uma-s-1p1')."
+            )
+
+        options = spec.options_dict()
+        task = options.pop("task", None)
+        if not task:
+            raise CalculatorBuildError(
+                "UMAProvider requires options['task'] — UMA is multi-task and CALM "
+                f"does not default the scientific domain. Choose one of {self.VALID_TASKS} "
+                "(use 'omat' for bulk inorganic materials workflows)."
+            )
+        if task not in self.VALID_TASKS:
+            raise CalculatorBuildError(
+                f"Unknown UMA task {task!r}; expected one of {self.VALID_TASKS}."
+            )
+
+        from fairchem.core import FAIRChemCalculator, pretrained_mlip
+
+        try:
+            predictor = pretrained_mlip.get_predict_unit(model, device=spec.device or "cpu")
+            return FAIRChemCalculator(predictor, task_name=task, **options)
+        except TypeError as e:
+            raise CalculatorBuildError(
+                f"Failed to construct UMA calculator (model={model!r}, task={task!r}). "
+                f"Unsupported option keys: {sorted(options)}"
+            ) from e
+        except Exception as e:
+            msg = str(e)
+            if "gated" in msg.lower() or "401" in msg or "403" in msg or "authent" in msg.lower():
+                raise CalculatorBuildError(
+                    f"Could not download UMA checkpoint {model!r}: the weights are "
+                    "license-gated on Hugging Face. Accept the license on the model page "
+                    "and run `huggingface-cli login` first."
+                ) from e
+            raise
+
+
+class PETMADProvider(CalculatorProvider):
+    """Provider for PET-MAD universal potentials via ``pet-mad``.
+
+    ``spec.model`` is either a released PET-MAD version tag (e.g.
+    ``latest``, ``1.1``) or a filesystem path to a bespoke checkpoint
+    (loaded via ``checkpoint_path``) — the same foundation/bespoke duality
+    as the ``nequip`` family. Weights download from Hugging Face
+    (ungated) on first use.
+    """
+
+    DEFAULT_MODEL = "latest"
+
+    @property
+    def family(self) -> str:
+        return "petmad"
+
+    def describe(self) -> str:
+        return "PET-MAD universal potentials via pet_mad.calculator.PETMADCalculator"
+
+    def required_extras(self) -> tuple[str, ...]:
+        return ("pet-mad",)
+
+    def is_available(self) -> bool:
+        return importlib.util.find_spec("pet_mad") is not None
+
+    def normalize_spec(self, spec: CalculatorSpec) -> CalculatorSpec:
+        model = (spec.model or "").strip()
+        if not model or model == "default":
+            return spec.replace(model=self.DEFAULT_MODEL)
+        return spec
+
+    def create(self, spec: CalculatorSpec) -> Any:
+        spec = self.normalize_spec(spec)
+        if not self.is_available():
+            raise OptionalDependencyError(
+                "pet-mad is not installed. Install it (e.g. `pip install pet-mad`) "
+                "to use PET-MAD calculators."
+            )
+        from pet_mad.calculator import PETMADCalculator
+
+        options = spec.options_dict()
+        model = spec.model
+        kwargs: dict[str, Any] = {"device": spec.device or "cpu", **options}
+        path = Path(model).expanduser()
+        if path.exists():
+            kwargs["checkpoint_path"] = str(path)
+        else:
+            kwargs["version"] = model
+        try:
+            return PETMADCalculator(**kwargs)
+        except TypeError as e:
+            raise CalculatorBuildError(
+                f"Failed to construct PET-MAD calculator (model={model!r}). "
+                f"Unsupported option keys: {sorted(options)}"
+            ) from e

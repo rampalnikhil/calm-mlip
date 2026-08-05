@@ -48,6 +48,13 @@ The current registry contains five families.
 | `grace` | GRACE foundation models through `tensorpotential` | `calm-grace.yml` or the `grace` extra | Provider/model availability does not establish interface accuracy |
 | `mace` | MACE foundation models through `mace_mp` | `calm-mace.yml` or the `mace` extra | Device, model download, precision, and stress support must match the workflow |
 | `lammps` | ASE `lammpsrun` or `lammpslib` adapter | Baseline science environment plus an external LAMMPS runtime and potential files | CALM cannot validate external executables, libraries, commands, licensed files, or parameterization |
+| `sevenn` | SevenNet foundation models | `calm-sevenn.yml` or the `sevenn` extra | Model coverage and device support must match the workflow |
+| `mattersim` | MatterSim foundation models | `calm-mattersim.yml` or the `mattersim` extra | Model coverage and device support must match the workflow |
+| `orb` | Orb foundation models | `calm-orb.yml` or the `orb` extra | `torch.compile` is disabled by default for CPU execution |
+| `matgl` | MatGL (M3GNet-architecture) PES models | `calm-matgl.yml` or the `matgl` extra | Pretrained names resolve through `matgl.load_model` |
+| `nequip` | NequIP/Allegro compiled models | `calm-nequip.yml` or the `nequip` extra | Requires a `nequip-compile` artifact |
+| `uma` | Meta/FAIR-Chem UMA models | `calm-uma.yml` or the `uma` extra | Multi-task; task head is explicit and weights are license-gated |
+| `petmad` | PET-MAD universal potential | `calm-petmad.yml` or the `petmad` extra | Accepts a version tag or a bespoke checkpoint path |
 
 The source-checkout environment guide at `environments/README.md` gives installation and validation commands for each family.
 
@@ -63,6 +70,13 @@ python environments/validate_environment.py --provider chgnet
 python environments/validate_environment.py --provider grace
 python environments/validate_environment.py --provider mace
 python environments/validate_environment.py --provider lammps
+python environments/validate_environment.py --provider matgl
+python environments/validate_environment.py --provider mattersim
+python environments/validate_environment.py --provider nequip
+python environments/validate_environment.py --provider orb
+python environments/validate_environment.py --provider petmad
+python environments/validate_environment.py --provider sevenn
+python environments/validate_environment.py --provider uma
 ```
 
 The validator checks the selected dependency layer, provider registration and availability, version identity, and a disposable project create/reopen smoke test. It does not run model inference or certify scientific accuracy.

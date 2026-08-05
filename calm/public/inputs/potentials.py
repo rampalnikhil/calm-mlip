@@ -59,6 +59,116 @@ class Potential:
         return cls("mace", model, device=device, options=dict(kwargs), quiet=quiet)
 
     @classmethod
+    def chgnet(
+        cls,
+        model: str = "0.3.0",
+        *,
+        device: str = "cpu",
+        quiet: bool = False,
+        **kwargs,
+    ) -> "Potential":
+        return cls("chgnet", model, device=device, options=dict(kwargs), quiet=quiet)
+
+    @classmethod
+    def sevenn(
+        cls,
+        model: str = "7net-0",
+        *,
+        device: str = "cpu",
+        quiet: bool = False,
+        **kwargs,
+    ) -> "Potential":
+        return cls("sevenn", model, device=device, options=dict(kwargs), quiet=quiet)
+
+    @classmethod
+    def mattersim(
+        cls,
+        model: str = "default",
+        *,
+        device: str = "cpu",
+        quiet: bool = False,
+        **kwargs,
+    ) -> "Potential":
+        return cls("mattersim", model, device=device, options=dict(kwargs), quiet=quiet)
+
+    @classmethod
+    def orb(
+        cls,
+        model: str = "orb-v3-conservative-inf-omat",
+        *,
+        device: str = "cpu",
+        quiet: bool = False,
+        **kwargs,
+    ) -> "Potential":
+        return cls("orb", model, device=device, options=dict(kwargs), quiet=quiet)
+
+    @classmethod
+    def nequip(
+        cls,
+        model: str,
+        *,
+        device: str = "cpu",
+        quiet: bool = False,
+        **kwargs,
+    ) -> "Potential":
+        """NequIP/Allegro compiled model (foundation or bespoke) from a file path."""
+        return cls("nequip", model, device=device, options=dict(kwargs), quiet=quiet)
+
+    @classmethod
+    def allegro(
+        cls,
+        model: str = "Allegro-OAM-L",
+        *,
+        device: str = "cpu",
+        quiet: bool = False,
+        **kwargs,
+    ) -> "Potential":
+        """Allegro model: a nequip.net foundation name (default Allegro-OAM-L)
+        or a path to a bespoke compiled artifact (.nequip.pth/.nequip.pt2)."""
+        return cls("nequip", model, device=device, options=dict(kwargs), quiet=quiet)
+
+    @classmethod
+    def uma(
+        cls,
+        model: str = "uma-s-1p1",
+        task: str = "omat",
+        *,
+        device: str = "cpu",
+        quiet: bool = False,
+        **kwargs,
+    ) -> "Potential":
+        """Meta/FAIR-Chem UMA model. ``task`` selects the scientific domain
+        head (omat/omol/oc20/odac/omc); the public constructor defaults to
+        ``omat`` since CALM workflows target bulk inorganic materials."""
+        options = dict(kwargs)
+        options["task"] = task
+        return cls("uma", model, device=device, options=options, quiet=quiet)
+
+    @classmethod
+    def petmad(
+        cls,
+        model: str = "latest",
+        *,
+        device: str = "cpu",
+        quiet: bool = False,
+        **kwargs,
+    ) -> "Potential":
+        """PET-MAD universal potential: a released version tag or a path to
+        a bespoke checkpoint."""
+        return cls("petmad", model, device=device, options=dict(kwargs), quiet=quiet)
+
+    @classmethod
+    def matgl(
+        cls,
+        model: str = "M3GNet-PES-MatPES-PBE-2025.2",
+        *,
+        device: str = "cpu",
+        quiet: bool = False,
+        **kwargs,
+    ) -> "Potential":
+        return cls("matgl", model, device=device, options=dict(kwargs), quiet=quiet)
+
+    @classmethod
     def from_ase(
         cls, calculator: Any, *, name: str = "ase-calculator", quiet: bool = False
     ) -> "Potential":

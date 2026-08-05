@@ -134,8 +134,8 @@ def test_packaging_checker_projects_the_distribution_policy() -> None:
     assert result["conda_profile"] == "local_source_base_package"
     assert result["conda_source_kind"] == "local_path"
     assert result["source_environment_schema"] == "calm.source_environments.v1"
-    assert result["source_environment_recipe_count"] == 4
-    assert result["source_environment_provider_count"] == 5
+    assert result["source_environment_recipe_count"] == 11
+    assert result["source_environment_provider_count"] == 12
 
 
 def test_ci_cleans_build_outputs_and_checks_contents_before_twine() -> None:

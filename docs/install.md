@@ -144,6 +144,13 @@ CALM maintains separate source-checkout recipes for the three pip-managed ML pro
 | `chgnet` | `environments/calm-chgnet.yml` | `python environments/validate_environment.py --provider chgnet` |
 | `grace` | `environments/calm-grace.yml` | `python environments/validate_environment.py --provider grace` |
 | `mace` | `environments/calm-mace.yml` | `python environments/validate_environment.py --provider mace` |
+| `matgl` | `environments/calm-matgl.yml` | `python environments/validate_environment.py --provider matgl` |
+| `mattersim` | `environments/calm-mattersim.yml` | `python environments/validate_environment.py --provider mattersim` |
+| `nequip` | `environments/calm-nequip.yml` | `python environments/validate_environment.py --provider nequip` |
+| `orb` | `environments/calm-orb.yml` | `python environments/validate_environment.py --provider orb` |
+| `petmad` | `environments/calm-petmad.yml` | `python environments/validate_environment.py --provider petmad` |
+| `sevenn` | `environments/calm-sevenn.yml` | `python environments/validate_environment.py --provider sevenn` |
+| `uma` | `environments/calm-uma.yml` | `python environments/validate_environment.py --provider uma` |
 
 For example:
 

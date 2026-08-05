@@ -19,7 +19,7 @@ authors = [
 # explicit extras so a base installation can open and inspect projects without
 # silently installing scientific or provider runtimes.
 dependencies = [
-    "numpy>=1.26,<3",
+    "numpy>=1.26,<2.5",  # <2.5: NumPy 2.5 in-place .shape deprecation breaks slab construction
     "sqlalchemy>=2.0,<3",
 ]
 
@@ -50,7 +50,7 @@ classifiers = [
 science = [
   "scipy>=1.11.2,<2",
   "ase>=3.25,<4",
-  "spglib>=2.6,<3",
+  "spglib>=2.6,<2.7",  # <2.7: spglib 2.7 legacy-error-path deprecation cascade
 ]
 
 # Optional tabular and visualization helpers.
@@ -95,6 +95,13 @@ dev = [
 grace = ["tensorpotential"]
 mace = ["mace-torch"]
 chgnet = ["chgnet"]
+sevenn = ["sevenn"]
+mattersim = ["mattersim"]
+orb = ["orb-models"]
+matgl = ["matgl"]
+nequip = ["nequip"]
+uma = ["fairchem-core"]
+petmad = ["pet-mad"]
 
 [project.urls]
 Homepage = "https://czgitlab.llnl.gov/weitzner/calm"

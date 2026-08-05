@@ -91,7 +91,20 @@ def test_install_page_matches_supported_python_and_dependency_layers() -> None:
 def test_install_page_tracks_every_registered_provider_and_work_directory_rule() -> None:
     text = INSTALL.read_text(encoding="utf-8")
     families = default_registry().families()
-    assert families == ("ase", "chgnet", "grace", "lammps", "mace")
+    assert families == (
+        "ase",
+        "chgnet",
+        "grace",
+        "lammps",
+        "mace",
+        "matgl",
+        "mattersim",
+        "nequip",
+        "orb",
+        "petmad",
+        "sevenn",
+        "uma",
+    )
     for family in families:
         assert f"`{family}`" in text
         assert f"--provider {family}" in text

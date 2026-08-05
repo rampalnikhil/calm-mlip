@@ -76,14 +76,28 @@ _EXPECTED_OWNED_FILES = [
     "calm-chgnet.yml",
     "calm-grace.yml",
     "calm-mace.yml",
+    "calm-matgl.yml",
+    "calm-mattersim.yml",
+    "calm-nequip.yml",
+    "calm-orb.yml",
+    "calm-petmad.yml",
     "calm-science.yml",
+    "calm-sevenn.yml",
+    "calm-uma.yml",
     "validate_environment.py",
 ]
 _EXPECTED_RECIPES = {
     "calm-chgnet.yml",
     "calm-grace.yml",
     "calm-mace.yml",
+    "calm-matgl.yml",
+    "calm-mattersim.yml",
+    "calm-nequip.yml",
+    "calm-orb.yml",
+    "calm-petmad.yml",
     "calm-science.yml",
+    "calm-sevenn.yml",
+    "calm-uma.yml",
 }
 _REQUIRED_VALIDATOR_FRAGMENTS = (
     "calm.source_environment_validation.v1",

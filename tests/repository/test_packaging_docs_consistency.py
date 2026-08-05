@@ -31,7 +31,7 @@ SKIP_DIR_NAMES = {
     "site",
     "calm.egg-info",
 }
-DEFERRED_FRAMEWORKS = {"m3gnet", "matgl", "sevennet", "nequip", "mattersim", "orb"}
+DEFERRED_FRAMEWORKS = {"m3gnet"}
 
 
 def _pyproject_extras() -> set[str]:
@@ -145,4 +145,17 @@ def test_greenfield_contract_requires_calculator_reference_to_track_registry() -
         "source": "calm.calculators.registry.default_registry()",
         "must_track_all_registered_families": True,
     }
-    assert set(default_registry().families()) == {"ase", "chgnet", "grace", "lammps", "mace"}
+    assert set(default_registry().families()) == {
+        "ase",
+        "chgnet",
+        "grace",
+        "lammps",
+        "mace",
+        "matgl",
+        "mattersim",
+        "nequip",
+        "orb",
+        "petmad",
+        "sevenn",
+        "uma",
+    }
