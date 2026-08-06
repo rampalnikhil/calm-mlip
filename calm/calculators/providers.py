@@ -775,57 +775,68 @@ class NequIPProvider(CalculatorProvider):
         cache_root.mkdir(parents=True, exist_ok=True)
 
         safe = registry_id.replace("nequip.net:", "").replace("/", "__").replace(":", "__")
-        # AOTInductor is the only compile mode on torch >= 2.10 (TorchScript
-        # compilation was removed upstream). The artifact is device-specific,
-        # so the cache key includes the device. Note the --target distinction:
-        # this provider compiles for ASE; LAMMPS deployment (pair_allegro /
-        # ML-IAP) uses separately compiled --target artifacts.
-        mode = "aotinductor"
-        # AOTInductor artifacts embed compiled device code and are only
-        # loadable by the torch build that produced them, so the cache key
-        # carries the full torch version string. That string includes the
-        # accelerator build tag (e.g. "2.7.0+rocm6.3" vs "2.13.0+cu130"),
-        # which keeps CUDA- and ROCm-compiled artifacts from colliding on a
-        # shared filesystem.
+        # Two compile modes exist. AOTInductor produces the .nequip.pt2
+        # artifact and is substantially faster at inference (measured ~11x on
+        # Allegro and ~2.7x on NequIP versus TorchScript on CPU), so it is
+        # tried first. TorchScript produces .nequip.pth and is the fallback:
+        # inductor code generation segfaults on ROCm builds for these models,
+        # and TorchScript compiles and runs there. Note the --target
+        # distinction: this provider compiles for ASE, while LAMMPS deployment
+        # (pair_allegro / ML-IAP) uses separately compiled --target artifacts.
+        #
+        # Compiled artifacts embed code tied to the torch build that produced
+        # them, so the cache key carries the full torch version string. That
+        # string includes the accelerator build tag ("2.7.0+rocm6.3" vs
+        # "2.13.0+cu130"), which also keeps CUDA- and ROCm-compiled artifacts
+        # from colliding on a shared filesystem.
         import torch
 
         build = torch.__version__.replace("+", "-").replace("/", "-")
-        artifact = cache_root / f"{safe}__{device}__torch{build}.nequip.pt2"
-        if artifact.exists():
-            return artifact
-
-        cmd = [
-            "nequip-compile",
-            registry_id,
-            str(artifact),
-            "--mode",
-            mode,
-            "--device",
-            device,
-            "--target",
-            "ase",
+        modes = (("aotinductor", "nequip.pt2"), ("torchscript", "nequip.pth"))
+        candidates = [
+            (mode, cache_root / f"{safe}__{device}__torch{build}.{suffix}")
+            for mode, suffix in modes
         ]
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
-        except FileNotFoundError as e:
-            raise OptionalDependencyError(
-                "nequip-compile CLI not found; is the nequip package installed in this environment?"
-            ) from e
-        if proc.returncode != 0 or not artifact.exists():
-            tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-8:]
-            raise CalculatorBuildError(
-                f"nequip-compile failed for {registry_id!r} (device={device!r}). "
-                + (
-                    "On a ROCm build, AOTInductor needs the HIP headers: set "
-                    "ROCM_PATH (and ensure hip/hip_runtime.h is on the include "
-                    "path) before compiling. "
-                    if getattr(torch.version, "hip", None)
-                    else ""
-                )
-                + "\n"
-                + "\n".join(tail)
+
+        for _, cached in candidates:
+            if cached.exists():
+                return cached
+
+        failures: list[str] = []
+        for mode, artifact in candidates:
+            cmd = [
+                "nequip-compile",
+                registry_id,
+                str(artifact),
+                "--mode",
+                mode,
+                "--device",
+                device,
+                "--target",
+                "ase",
+            ]
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+            except FileNotFoundError as e:
+                raise OptionalDependencyError(
+                    "nequip-compile CLI not found; is the nequip package installed in this environment?"
+                ) from e
+            except subprocess.TimeoutExpired:
+                failures.append(f"[{mode}] timed out after 3600s")
+                continue
+
+            if proc.returncode == 0 and artifact.exists():
+                return artifact
+
+            tail = "\n".join(
+                (proc.stderr or proc.stdout or "").strip().splitlines()[-8:]
             )
-        return artifact
+            failures.append(f"[{mode}] exit {proc.returncode}\n{tail}")
+
+        raise CalculatorBuildError(
+            f"nequip-compile failed for {registry_id!r} (device={device!r}) in "
+            "every available mode.\n" + "\n\n".join(failures)
+        )
 
 
 class UMAProvider(CalculatorProvider):

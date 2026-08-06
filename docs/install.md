@@ -231,13 +231,17 @@ export TORCHINDUCTOR_CACHE_DIR=$SCRATCH/torchinductor
 export MIOPEN_USER_DB_PATH=$SCRATCH/miopen
 ```
 
-Those settings are necessary but not currently sufficient. On PyTorch
-2.7.0+rocm6.3, `nequip-compile --mode aotinductor --device cuda` reaches code
-generation and then aborts with a segmentation fault, having reported
-`aten._linalg_det.default is missing a c-shim implementation`. That is a gap in
-the inductor ROCm backend rather than a CALM or NequIP defect. The NequIP and
-Allegro providers therefore run on CPU on this stack; the eager-mode providers
-are unaffected and do run on GPU.
+On PyTorch 2.7.0+rocm6.3, `nequip-compile --mode aotinductor --device cuda`
+reaches code generation and then aborts with a segmentation fault, having
+reported `aten._linalg_det.default is missing a c-shim implementation`. That is
+a gap in the inductor ROCm backend rather than a CALM or NequIP defect.
+
+The provider recovers from this: it compiles with AOTInductor first and falls
+back to TorchScript when that fails, so NequIP and Allegro do run on GPU there.
+AOTInductor is tried first because its compiled artifacts evaluate considerably
+faster -- roughly 11x for Allegro and 2.7x for NequIP in CPU single-point
+timings -- so the slower mode is used only when the faster one is unavailable.
+Both artifacts are cached side by side, keyed by device and torch build.
 
 Backends do not always share an environment. MACE requires `e3nn` 0.4.x while
 SevenNet requires 0.6.x, so they need separate environments -- which is why the
