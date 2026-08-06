@@ -11,4 +11,4 @@ dependencies:
   - spglib>=2.6,<2.7
   - pip
   - pip:
-      - orb-models
+      - orb-models>=0.7

@@ -15,7 +15,9 @@ from typing import Any, Dict
 class Potential:
     """Describe a calculator or machine-learned interatomic potential lazily.
 
-    The facade stores provider, model, device, and provider-specific options
+    The facade stores provider, model, device, and provider-specific options.
+    ``device`` accepts any backend device string; ``"auto"`` resolves to the
+    GPU when one is visible and to the CPU otherwise
     without importing or initializing the underlying calculator. Construction is
     deferred until ``calculator()``, ``validate()``, or another calculator-
     backed workflow is invoked.

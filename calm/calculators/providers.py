@@ -21,6 +21,34 @@ from .registry import CalculatorProvider
 from .spec import CalculatorSpec
 
 
+def resolve_device(device: str | None) -> str:
+    """Resolve a requested device string to a concrete backend device.
+
+    ``None`` and ``"auto"`` are the only values interpreted here; every other
+    value is passed through untouched so each backend keeps its own device
+    validation. ``"auto"`` selects ``"cuda"`` when PyTorch reports a visible
+    accelerator and falls back to ``"cpu"`` otherwise, which keeps a single
+    script portable between CPU-only and GPU nodes.
+
+    ROCm builds of PyTorch expose AMD GPUs through the same ``torch.cuda``
+    namespace as CUDA builds, so this one check covers both vendors; the builds
+    are told apart by ``torch.version.hip``, not by the device string.
+    """
+
+    if device is None:
+        return "cpu"
+    if device != "auto":
+        return device
+    try:
+        import torch
+    except ImportError:
+        return "cpu"
+    try:
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:  # pragma: no cover - driver probing is environment specific
+        return "cpu"
+
+
 class MACEProvider(CalculatorProvider):
     """Provider for MACE foundation models via `mace.calculators.mace_mp`."""
 
@@ -69,7 +97,7 @@ class MACEProvider(CalculatorProvider):
                 "mace.calculators.mace_mp. Install or upgrade `mace-torch`."
             ) from exc
 
-        device = spec.device or "cpu"
+        device = resolve_device(spec.device)
         options = spec.options_dict()
 
         # Guard against ambiguous double-specification.
@@ -176,7 +204,7 @@ class CHGNetProvider(CalculatorProvider):
 
         calc_kwargs = dict(options)
         if spec.device:
-            calc_kwargs["use_device"] = spec.device
+            calc_kwargs["use_device"] = resolve_device(spec.device)
 
         try:
             return CHGNetCalculator(model=model, **calc_kwargs)
@@ -241,7 +269,21 @@ class GRACEProvider(CalculatorProvider):
                 "GRACEProvider does not allow 'model' inside options; use spec.model."
             )
 
-        # GRACE model construction does not consume CalculatorSpec.device.
+        # GRACE runs on TensorFlow, which places ops through its own
+        # visible-device configuration rather than an explicit argument, so
+        # grace_fm has no device parameter to forward to. Silently dropping an
+        # explicit device request would run on CPU while reporting success, so
+        # reject it. "auto" is advisory and is allowed to fall back to CPU.
+        if spec.device and spec.device != "auto":
+            if resolve_device(spec.device) != "cpu":
+                raise CalculatorSpecError(
+                    f"GRACEProvider cannot honor device={spec.device!r}. GRACE "
+                    "uses TensorFlow, which selects devices through its own "
+                    "visible-device configuration (for example the "
+                    "CUDA_VISIBLE_DEVICES environment variable) rather than a "
+                    "device argument. Use device='cpu' or device='auto' and "
+                    "control GPU placement through the environment."
+                )
         try:
             return grace_fm(spec.model, **options)
         except TypeError as e:
@@ -477,7 +519,7 @@ class SevenNetProvider(CalculatorProvider):
 
         options = spec.options_dict()
         try:
-            return SevenNetCalculator(model=spec.model, device=spec.device or "cpu", **options)
+            return SevenNetCalculator(model=spec.model, device=resolve_device(spec.device), **options)
         except TypeError as e:
             raise CalculatorBuildError(
                 f"Failed to construct SevenNet calculator (model={spec.model!r}). "
@@ -515,7 +557,7 @@ class MatterSimProvider(CalculatorProvider):
         if model and model != "default":
             options.setdefault("load_path", model)
         try:
-            return MatterSimCalculator(device=spec.device or "cpu", **options)
+            return MatterSimCalculator(device=resolve_device(spec.device), **options)
         except TypeError as e:
             raise CalculatorBuildError(
                 f"Failed to construct MatterSim calculator (model={spec.model!r}). "
@@ -560,6 +602,10 @@ class OrbProvider(CalculatorProvider):
                 "Orb is not installed. Install it (e.g. `pip install orb-models`) to use Orb calculators."
             )
         from orb_models.forcefield import pretrained
+
+        # Requires orb-models >= 0.7 (see the `orb` extra): earlier releases
+        # both place ORBCalculator elsewhere and return a bare model from the
+        # pretrained factories instead of a (model, adapter) pair.
         from orb_models.forcefield.inference.calculator import ORBCalculator
 
         factory_name = spec.model.replace("-", "_")
@@ -570,7 +616,7 @@ class OrbProvider(CalculatorProvider):
                 f"orb_models.forcefield.pretrained.{factory_name}"
             )
         options = spec.options_dict()
-        device = spec.device or "cpu"
+        device = resolve_device(spec.device)
         compile_flag = options.pop("compile", False)
         try:
             model, adapter = factory(device=device, compile=compile_flag)
@@ -686,7 +732,7 @@ class NequIPProvider(CalculatorProvider):
             model if model.startswith("nequip.net:") else None
         )
         if registry_id is not None:
-            path = self._compiled_foundation_artifact(registry_id, spec.device or "cpu")
+            path = self._compiled_foundation_artifact(registry_id, resolve_device(spec.device))
         else:
             path = Path(model).expanduser()
             if not path.exists():
@@ -702,7 +748,7 @@ class NequIPProvider(CalculatorProvider):
         try:
             return NequIPCalculator.from_compiled_model(
                 compile_path=str(path),
-                device=spec.device or "cpu",
+                device=resolve_device(spec.device),
                 **options,
             )
         except TypeError as e:
@@ -735,7 +781,16 @@ class NequIPProvider(CalculatorProvider):
         # this provider compiles for ASE; LAMMPS deployment (pair_allegro /
         # ML-IAP) uses separately compiled --target artifacts.
         mode = "aotinductor"
-        artifact = cache_root / f"{safe}__{device}.nequip.pt2"
+        # AOTInductor artifacts embed compiled device code and are only
+        # loadable by the torch build that produced them, so the cache key
+        # carries the full torch version string. That string includes the
+        # accelerator build tag (e.g. "2.7.0+rocm6.3" vs "2.13.0+cu130"),
+        # which keeps CUDA- and ROCm-compiled artifacts from colliding on a
+        # shared filesystem.
+        import torch
+
+        build = torch.__version__.replace("+", "-").replace("/", "-")
+        artifact = cache_root / f"{safe}__{device}__torch{build}.nequip.pt2"
         if artifact.exists():
             return artifact
 
@@ -759,7 +814,15 @@ class NequIPProvider(CalculatorProvider):
         if proc.returncode != 0 or not artifact.exists():
             tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-8:]
             raise CalculatorBuildError(
-                f"nequip-compile failed for {registry_id!r} (device={device!r}):\n"
+                f"nequip-compile failed for {registry_id!r} (device={device!r}). "
+                + (
+                    "On a ROCm build, AOTInductor needs the HIP headers: set "
+                    "ROCM_PATH (and ensure hip/hip_runtime.h is on the include "
+                    "path) before compiling. "
+                    if getattr(torch.version, "hip", None)
+                    else ""
+                )
+                + "\n"
                 + "\n".join(tail)
             )
         return artifact
@@ -824,7 +887,7 @@ class UMAProvider(CalculatorProvider):
         from fairchem.core import FAIRChemCalculator, pretrained_mlip
 
         try:
-            predictor = pretrained_mlip.get_predict_unit(model, device=spec.device or "cpu")
+            predictor = pretrained_mlip.get_predict_unit(model, device=resolve_device(spec.device))
             return FAIRChemCalculator(predictor, task_name=task, **options)
         except TypeError as e:
             raise CalculatorBuildError(
@@ -884,7 +947,7 @@ class PETMADProvider(CalculatorProvider):
 
         options = spec.options_dict()
         model = spec.model
-        kwargs: dict[str, Any] = {"device": spec.device or "cpu", **options}
+        kwargs: dict[str, Any] = {"device": resolve_device(spec.device), **options}
         path = Path(model).expanduser()
         if path.exists():
             kwargs["checkpoint_path"] = str(path)

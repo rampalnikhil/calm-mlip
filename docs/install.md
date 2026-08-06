@@ -184,6 +184,65 @@ python -m pip install -e . --no-deps
 python environments/validate_environment.py --provider <family>
 ```
 
+#### Selecting a device
+
+Every provider that wraps a PyTorch backend accepts `device`:
+
+```python
+Potential.chgnet(device="cuda")   # explicit accelerator
+Potential.chgnet(device="cpu")    # explicit CPU
+Potential.chgnet(device="auto")   # accelerator when visible, else CPU
+```
+
+`"auto"` keeps one script portable between CPU-only and GPU nodes. ROCm builds
+of PyTorch expose AMD GPUs through the same `torch.cuda` namespace as CUDA
+builds, so `device="cuda"` and `device="auto"` are correct on both vendors; the
+two builds are distinguished by `torch.version.hip`, not by the device string.
+
+Two providers cannot honor a device argument. GRACE runs on TensorFlow, which
+selects devices through its own visible-device configuration, so an explicit
+non-CPU device is rejected rather than silently ignored. MatGL accepts the
+argument but currently executes on CPU regardless.
+
+#### Worked example: AMD ROCm
+
+The default PyTorch wheel on PyPI is built for CUDA, so a plain
+`pip install <backend>` on an AMD machine produces a stack where
+`torch.cuda.is_available()` is `False`. Install PyTorch from the ROCm index
+first, then constrain the backend resolve so it cannot pull the CUDA wheel back
+in:
+
+```bash
+pip install torch==2.7.0+rocm6.3 --index-url https://download.pytorch.org/whl/rocm6.3
+echo "torch==2.7.0+rocm6.3" > constraints.txt
+pip install <backend> -c constraints.txt \
+  --extra-index-url https://download.pytorch.org/whl/rocm6.3
+python -c "import torch; print(torch.version.hip, torch.cuda.is_available())"
+```
+
+Ahead-of-time compilation (the NequIP and Allegro foundation-model path) needs
+the HIP toolchain headers and writes large compiler caches. Point `ROCM_PATH` at
+an installed ROCm tree, and redirect the caches if the home directory is small:
+
+```bash
+export ROCM_PATH=/opt/rocm-6.3.1          # no /opt/rocm symlink on many sites
+export TRITON_CACHE_DIR=$SCRATCH/triton   # Triton ignores XDG_CACHE_HOME
+export TORCHINDUCTOR_CACHE_DIR=$SCRATCH/torchinductor
+export MIOPEN_USER_DB_PATH=$SCRATCH/miopen
+```
+
+Those settings are necessary but not currently sufficient. On PyTorch
+2.7.0+rocm6.3, `nequip-compile --mode aotinductor --device cuda` reaches code
+generation and then aborts with a segmentation fault, having reported
+`aten._linalg_det.default is missing a c-shim implementation`. That is a gap in
+the inductor ROCm backend rather than a CALM or NequIP defect. The NequIP and
+Allegro providers therefore run on CPU on this stack; the eager-mode providers
+are unaffected and do run on GPU.
+
+Backends do not always share an environment. MACE requires `e3nn` 0.4.x while
+SevenNet requires 0.6.x, so they need separate environments -- which is why the
+recipes are per family rather than one combined stack.
+
 ## Installation boundaries
 
 The current documented user distribution is a tagged source checkout. A package-registry command such as `pip install calm` is not yet a supported installation instruction.
