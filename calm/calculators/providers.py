@@ -822,11 +822,18 @@ class NequIPProvider(CalculatorProvider):
                     "nequip-compile CLI not found; is the nequip package installed in this environment?"
                 ) from e
             except subprocess.TimeoutExpired:
+                artifact.unlink(missing_ok=True)
                 failures.append(f"[{mode}] timed out after 3600s")
                 continue
 
             if proc.returncode == 0 and artifact.exists():
                 return artifact
+
+            # A failed compile can leave a partial archive behind -- notably a
+            # segfault part-way through writing it. Kept, it would be returned
+            # by the cache probe above on the next call and fail at load time
+            # instead of recompiling, so discard it before trying the next mode.
+            artifact.unlink(missing_ok=True)
 
             tail = "\n".join(
                 (proc.stderr or proc.stdout or "").strip().splitlines()[-8:]
