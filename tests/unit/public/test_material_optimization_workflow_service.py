@@ -69,7 +69,14 @@ def test_project_material_optimization_composes_once_and_persists(monkeypatch) -
         state="optimized_bulk",
     )
     observed = {}
-    calculator = object()
+    from calm.calculators.spec import CalculatorSpec
+
+    calculator = SimpleNamespace(calm_spec=CalculatorSpec(family="ase", model="EMT"))
+    configured = []
+    monkeypatch.setattr(
+        "calm.public.inputs.project_config.configure",
+        lambda project, **kwargs: configured.append(kwargs),
+    )
 
     def optimize(material, **kwargs):
         observed["material"] = material
@@ -102,6 +109,8 @@ def test_project_material_optimization_composes_once_and_persists(monkeypatch) -
     assert saver.calls[0]["name"] == "optimized"
     assert result is optimized
     assert result.uid_full == "bulk:optimized"
+    assert optimized.optimized_with == calculator.calm_spec
+    assert configured[0]["calculator"] == calculator.calm_spec.to_dict()
 
 
 def test_potential_provenance_is_exact_and_project_owned(monkeypatch) -> None:

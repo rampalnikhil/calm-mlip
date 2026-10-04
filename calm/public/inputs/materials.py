@@ -45,6 +45,7 @@ class Material:
     spacegroup: Optional[str] = None
     uid_full: Optional[str] = None
     authority: str = "projection"
+    optimized_with: Any | None = None
 
     @classmethod
     def from_file(
@@ -149,7 +150,8 @@ class Material:
             formula = formula or derived_mapping.get("formula")
             spacegroup = record.get("spacegroup") or derived_mapping.get("spacegroup")
             optimized_with = (
-                record.get("optimized_with")
+                record.get("optimized_with_calculator_uid_full")
+                or record.get("optimized_with")
                 or record.get("calculator")
                 or payload.get("optimized_with")
                 or payload.get("calculator")
@@ -167,8 +169,10 @@ class Material:
             formula = getattr(obj, "formula", None)
             state = getattr(obj, "kind", None) or getattr(obj, "state", "reference")
             spacegroup = getattr(obj, "spacegroup", None)
-            optimized_with = getattr(obj, "optimized_with", None) or getattr(
-                obj, "calculator", None
+            optimized_with = (
+                getattr(obj, "optimized_with_calculator_uid_full", None)
+                or getattr(obj, "optimized_with", None)
+                or getattr(obj, "calculator", None)
             )
 
         if isinstance(atoms_raw, Mapping):

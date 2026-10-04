@@ -500,7 +500,8 @@ class Workspace:
         )
 
     def list_bulks(self, *, limit: int | None = None) -> list[BulkSummary]:
-        return self._bulks.list_bulks(limit=50 if limit is None else limit)
+        """List bulk summaries; ``None`` leaves the query unlimited."""
+        return self._bulks.list_bulks(limit=limit)
 
     def get_bulk(self, uid_or_short: str) -> Bulk:
         """Get a bulk by uid_full ("bulk:...") or short id ("b_...")."""
@@ -740,10 +741,10 @@ class Workspace:
         *,
         limit: int | None = None,
     ) -> list[SlabSummary]:
-        """List durable slab summaries without mutating persisted identity."""
+        """List durable slab summaries; ``None`` leaves the query unlimited."""
         return self._slabs.list_slabs(
             bulk_id=bulk,
-            limit=50 if limit is None else limit,
+            limit=limit,
         )
 
     def get_slab(self, uid_or_short: str) -> Slab:
@@ -2519,7 +2520,9 @@ class Workspace:
         Parameters
         ----------
         artifact
-            ArtifactRef or URI string.
+            ArtifactRef or URI string. Content returned for an ArtifactRef is
+            checked against its persisted identity. Raw URI strings carry no
+            identity and cannot be checked.
         mode
             - "path": return the resolved ``Path`` only.
             - "bytes": return raw bytes.
@@ -2537,19 +2540,44 @@ class Workspace:
 
         if mode == "path":
             return path
+        # Hash and decode the same bytes, so a concurrent file replacement
+        # cannot substitute different content between verification and use.
+        data = path.read_bytes()
+        if isinstance(artifact, ArtifactRef):
+            from hashlib import sha256
+
+            from calm.project.domain.identity_v2 import (
+                artifact_identity_payload,
+                persisted_entity_uid_v2,
+            )
+
+            expected_uid = persisted_entity_uid_v2(
+                "artifact",
+                artifact_identity_payload(
+                    run_uid_full=artifact.run_uid_full,
+                    kind=artifact.kind,
+                    uri=artifact.uri,
+                    content_sha256=sha256(data).hexdigest(),
+                    metadata=artifact.metadata,
+                ),
+            )
+            if expected_uid != artifact.uid_full:
+                raise ValueError(
+                    f"Artifact content does not match its persisted identity: {artifact.uid_full}"
+                )
         if mode == "bytes":
-            return path.read_bytes()
+            return data
         if mode == "text":
-            return path.read_text(encoding=encoding)
+            return data.decode(encoding)
         if mode == "json":
-            return json.loads(path.read_text(encoding=encoding))
+            return json.loads(data.decode(encoding))
 
         # Auto mode.
         suf = path.suffix.lower()
         if suf == ".json":
-            return json.loads(path.read_text(encoding=encoding))
+            return json.loads(data.decode(encoding))
         if suf in {".txt", ".log", ".md", ".csv"}:
-            return path.read_text(encoding=encoding)
+            return data.decode(encoding)
         return path
 
     def artifacts_by_category(self, run: str) -> dict[str, list[ArtifactRef]]:

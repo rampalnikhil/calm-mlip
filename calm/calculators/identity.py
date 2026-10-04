@@ -8,6 +8,40 @@ from typing import Any
 from calm.keys.uid import calculator_uid
 
 from .exceptions import CalculatorFingerprintError
+from .spec import CalculatorSpec
+
+
+def get_calculator_spec(calculator: Any) -> CalculatorSpec:
+    """Recover persistence provenance before starting a live calculation.
+
+    Built-in ASE calculators expose their complete parameters. Other live
+    calculators must declare a ``calm_spec`` CalculatorSpec (or its mapping),
+    since a runtime class name or hash cannot reconstruct an MLIP model.
+    """
+
+    declared = getattr(calculator, "calm_spec", None)
+    if isinstance(declared, CalculatorSpec):
+        return declared
+    if isinstance(declared, Mapping):
+        return CalculatorSpec.from_dict(declared)
+    if declared is not None:
+        raise CalculatorFingerprintError("calm_spec must be a CalculatorSpec or mapping.")
+
+    models = {
+        ("ase.calculators.emt", "EMT"): "EMT",
+        ("ase.calculators.lj", "LennardJones"): "LJ",
+        ("ase.calculators.morse", "MorsePotential"): "Morse",
+    }
+    cls = type(calculator)
+    model = models.get((cls.__module__, cls.__qualname__))
+    parameters = getattr(calculator, "parameters", None)
+    if model is not None and isinstance(parameters, Mapping):
+        return CalculatorSpec(family="ase", model=model, options=dict(parameters))
+    raise CalculatorFingerprintError(
+        "Cannot establish a CalculatorSpec for this live calculator before "
+        "optimization. Use potential=... or declare calculator.calm_spec "
+        "with its exact CalculatorSpec."
+    )
 
 
 def get_calculator_uid(calculator: Any) -> str:

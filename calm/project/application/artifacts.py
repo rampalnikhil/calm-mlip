@@ -158,18 +158,49 @@ class ArtifactsService:
         obj: Any,
         filename: str = "interface_atoms.json",
         metadata: Mapping[str, Any] | None = None,
+        existing_artifact_uid: str | None = None,
     ) -> ArtifactRef:
+        """Persist atoms, or reuse an existing content-identical owned artifact."""
+
+        require_entered_uow(uow, owner="ArtifactsService.put_interface_atoms_in")
         meta = dict(metadata or {})
         meta.setdefault("role", "derived_interface_atoms")
         meta.setdefault("interface_uid_full", interface_uid_full)
         text = json.dumps(obj, indent=2, sort_keys=True)
+        data = (text + "\n").encode("utf-8")
+        if existing_artifact_uid is not None:
+            existing = uow.artifacts.get_by_uid_full(existing_artifact_uid)
+            if existing is None:
+                raise KeyError(f"Missing interface atoms artifact: {existing_artifact_uid}")
+            # The immutable artifact UID includes its content digest. Recompute
+            # it with the original run and URI to compare content across runs.
+            expected_uid = persisted_entity_uid_v2(
+                "artifact",
+                artifact_identity_payload(
+                    run_uid_full=existing.run_uid_full,
+                    kind=existing.kind,
+                    uri=existing.uri,
+                    content_sha256=_sha256_hex(data),
+                    metadata=existing.metadata,
+                ),
+            )
+            if (
+                existing.kind != "interface_atoms"
+                or (existing.metadata or {}).get("interface_uid_full")
+                != interface_uid_full
+                or expected_uid != existing.uid_full
+            ):
+                raise ValueError(
+                    "A derived interface cannot own conflicting atoms artifacts."
+                )
+            return existing
         return self.put_bytes_in(
             uow,
             run,
             category="derived_interfaces",
             kind="interface_atoms",
             filename=filename,
-            data=(text + "\n").encode("utf-8"),
+            data=data,
             metadata=meta,
         )
 

@@ -1017,7 +1017,10 @@ class ReferenceEnergyOrchestrator:
         }
         run = self._runs.create(run_type="reference_energy", spec=spec)
 
-        if resume and run.status == "done":
+        if (
+            resume and not partial_resume and run.status == "done"
+            and not (run.progress or {}).get("n_failed", 0)
+        ):
             return run, [
                 ReferenceEnergyStageResult(
                     source_interface_uid=target.source_interface_uid_full,
@@ -1035,131 +1038,224 @@ class ReferenceEnergyOrchestrator:
             run.uid_full,
             progress={"stage": "reference_energy", "n_requested": len(prepared)},
         )
-        existing = self._existing(run.uid_full) if partial_resume else {}
-        stage_results: list[ReferenceEnergyStageResult] = []
-        completed: list[FollowupResult] = []
+        try:
+            existing = self._existing(run.uid_full) if partial_resume else {}
+            stage_results: list[ReferenceEnergyStageResult] = []
+            completed: list[FollowupResult] = []
 
-        with self._uow as uow:
-            for target in prepared:
-                key = (target.source_interface_uid_full, target.reference_kind)
-                if key in existing:
-                    row = existing[key]
-                    row_payload = dict(row.payload or {})
-                    stage_results.append(
-                        ReferenceEnergyStageResult(
-                            source_interface_uid=target.source_interface_uid_full,
-                            prototype_uid=target.prototype_uid_full,
-                            reference_kind=target.reference_kind,
-                            side=target.side,
-                            status="skipped",
+            with self._uow as uow:
+                for target in prepared:
+                    key = (target.source_interface_uid_full, target.reference_kind)
+                    if key in existing:
+                        row = existing[key]
+                        row_payload = dict(row.payload or {})
+                        stage_results.append(
+                            ReferenceEnergyStageResult(
+                                source_interface_uid=target.source_interface_uid_full,
+                                prototype_uid=target.prototype_uid_full,
+                                reference_kind=target.reference_kind,
+                                side=target.side,
+                                status="skipped",
+                                run_uid=run.uid_full,
+                                followup_uid=row.uid_full,
+                                energy_eV=row_payload["energy"]["total_eV"],
+                                energy_eV_per_formula_unit=row_payload["energy"][
+                                    "per_formula_unit_eV"
+                                ],
+                                reason="existing_followup",
+                            )
+                        )
+                        continue
+
+                    followup_uid = persisted_followup_uid(
+                        run_uid_full=run.uid_full,
+                        prototype_uid_full=target.prototype_uid_full,
+                        target_uid_full=target.source_interface_uid_full,
+                        target_kind="interface",
+                        kind="reference_energy",
+                        qualifiers={"reference_kind": target.reference_kind},
+                    )
+                    followup_id = uow.ids.ensure_short_id(uid_full=followup_uid, tag="f")
+                    config = dict(calculation_dict)
+                    config["target_atoms"] = target.atoms
+                    try:
+                        computed = self._backend.compute(
                             run_uid=run.uid_full,
-                            followup_uid=row.uid_full,
-                            energy_eV=row_payload["energy"]["total_eV"],
-                            energy_eV_per_formula_unit=row_payload["energy"][
-                                "per_formula_unit_eV"
-                            ],
-                            reason="existing_followup",
+                            prototype_uid=target.prototype_uid_full,
+                            target_uid=target.reference_uid_full,
+                            config=config,
+                            uow=uow,
                         )
-                    )
-                    continue
+                        energy = _finite_float(
+                            computed.energy,
+                            name="Computed reference total energy",
+                        )
+                        if formula == "work_of_adhesion_relaxed_surfaces":
+                            n_steps = _reference_step_count(
+                                computed.n_steps,
+                                relaxed_surface=True,
+                            )
+                            relaxation_summary = validate_relaxed_surface_summary(
+                                getattr(computed, "relaxation_summary", None),
+                                settings=relaxation_settings or {},
+                            )
+                            relaxed_atoms = getattr(computed, "relaxed_atoms", None)
+                            if relaxed_atoms is None:
+                                raise ValueError(
+                                    "Relaxed surface computation did not return the "
+                                    "final atomistic structure."
+                                )
+                            from calm.project.domain.contracts.relaxation import (
+                                validate_relaxed_structure_transition,
+                            )
 
-                followup_uid = persisted_followup_uid(
-                    run_uid_full=run.uid_full,
-                    prototype_uid_full=target.prototype_uid_full,
-                    target_uid_full=target.source_interface_uid_full,
-                    target_kind="interface",
-                    kind="reference_energy",
-                    qualifiers={"reference_kind": target.reference_kind},
-                )
-                followup_id = uow.ids.ensure_short_id(uid_full=followup_uid, tag="f")
-                config = dict(calculation_dict)
-                config["target_atoms"] = target.atoms
-                try:
-                    computed = self._backend.compute(
-                        run_uid=run.uid_full,
-                        prototype_uid=target.prototype_uid_full,
-                        target_uid=target.reference_uid_full,
-                        config=config,
+                            verified_transition = validate_relaxed_structure_transition(
+                                initial_positions=target.atoms.get_positions(),
+                                final_positions=relaxed_atoms.get_positions(),
+                                initial_cell=target.atoms.get_cell(),
+                                final_cell=relaxed_atoms.get_cell(),
+                                initial_numbers=(target.atoms.get_atomic_numbers()),
+                                final_numbers=(relaxed_atoms.get_atomic_numbers()),
+                                initial_pbc=target.atoms.get_pbc(),
+                                final_pbc=relaxed_atoms.get_pbc(),
+                                cell_mode="fixed",
+                            )
+                            relaxation_summary.update(verified_transition)
+                            final_structure_fingerprint = _structure_fingerprint(
+                                relaxed_atoms
+                            )
+                            final_area = _authoritative_interface_area(relaxed_atoms)
+                            if not isclose(
+                                final_area,
+                                float(target.metadata["reference_area_A2"]),
+                                rel_tol=1e-10,
+                                abs_tol=1e-10,
+                            ):
+                                raise ValueError(
+                                    "Relaxed surface cell area changed during the "
+                                    "fixed-cell "
+                                    "reference protocol."
+                                )
+                        else:
+                            n_steps = _reference_step_count(
+                                computed.n_steps,
+                                relaxed_surface=False,
+                            )
+                            relaxation_summary = None
+                            final_structure_fingerprint = None
+                    except Exception as exc:
+                        failure = {
+                            "message": str(exc),
+                            "exception_type": type(exc).__name__,
+                            "module": type(exc).__module__,
+                        }
+                        reference_metadata = {
+                            key: value
+                            for key, value in target.metadata.items()
+                            if key != "formula_id"
+                        }
+                        failed_payload = {
+                            "schema": REFERENCE_ENERGY_RESULT_SCHEMA,
+                            "version": ENERGY_RESULT_VERSION,
+                            "result_stage": "reference_failed",
+                            "reference": {
+                                "uid_full": target.reference_uid_full,
+                                "kind": target.reference_kind,
+                                "side": target.side,
+                                "formula_id": formula,
+                                "metadata": reference_metadata,
+                            },
+                            "backend": {
+                                "name": self._backend_name,
+                                "identity": dict(backend_identity),
+                                "settings": {
+                                    key: value
+                                    for key, value in calculation_dict.items()
+                                    if key != "reference_relaxation"
+                                },
+                            },
+                            "relaxation": (
+                                {
+                                    "settings": dict(relaxation_settings or {}),
+                                    "summary": {},
+                                    "final_structure_fingerprint": None,
+                                }
+                                if formula == "work_of_adhesion_relaxed_surfaces"
+                                else None
+                            ),
+                            "workflow_metadata": dict(user_payload),
+                            "failure": failure,
+                        }
+                        failed = FollowupResult(
+                            uid_full=followup_uid,
+                            id_short=followup_id,
+                            run_uid_full=run.uid_full,
+                            run_id_short=run.id_short,
+                            prototype_uid_full=target.prototype_uid_full,
+                            prototype_id_short=uow.ids.ensure_prototype_id(
+                                target.prototype_uid_full
+                            ),
+                            target_uid_full=target.source_interface_uid_full,
+                            target_kind="interface",
+                            kind="reference_energy",
+                            status="failed",
+                            best_energy=None,
+                            param1=None,
+                            param2=None,
+                            n_points=None,
+                            payload=failed_payload,
+                        )
+                        persist_followups_with_edges(uow=uow, followups=[failed])
+                        stage_results.append(
+                            ReferenceEnergyStageResult(
+                                source_interface_uid=target.source_interface_uid_full,
+                                prototype_uid=target.prototype_uid_full,
+                                reference_kind=target.reference_kind,
+                                side=target.side,
+                                status="failed",
+                                run_uid=run.uid_full,
+                                followup_uid=followup_uid,
+                                reason=str(exc),
+                            )
+                        )
+                        continue
+
+                    energy_per_fu = None
+                    reference_formula_units = target.metadata.get("reference_formula_units")
+                    if reference_formula_units is not None:
+                        reference_formula_units = _positive_integer(
+                            reference_formula_units,
+                            name="Reference formula-unit count",
+                        )
+                        energy_per_fu = energy / reference_formula_units
+                    artifact_refs = persist_artifact_payloads(
                         uow=uow,
+                        run_uid=run.uid_full,
+                        proto_uid=target.prototype_uid_full,
+                        target_uid=target.reference_uid_full,
+                        artifact_payloads=computed.artifact_payloads,
+                        artifacts=self._artifacts,
                     )
-                    energy = _finite_float(
-                        computed.energy,
-                        name="Computed reference total energy",
-                    )
-                    if formula == "work_of_adhesion_relaxed_surfaces":
-                        n_steps = _reference_step_count(
-                            computed.n_steps,
-                            relaxed_surface=True,
-                        )
-                        relaxation_summary = validate_relaxed_surface_summary(
-                            getattr(computed, "relaxation_summary", None),
-                            settings=relaxation_settings or {},
-                        )
-                        relaxed_atoms = getattr(computed, "relaxed_atoms", None)
-                        if relaxed_atoms is None:
-                            raise ValueError(
-                                "Relaxed surface computation did not return the "
-                                "final atomistic structure."
-                            )
-                        from calm.project.domain.contracts.relaxation import (
-                            validate_relaxed_structure_transition,
-                        )
-
-                        verified_transition = validate_relaxed_structure_transition(
-                            initial_positions=target.atoms.get_positions(),
-                            final_positions=relaxed_atoms.get_positions(),
-                            initial_cell=target.atoms.get_cell(),
-                            final_cell=relaxed_atoms.get_cell(),
-                            initial_numbers=(target.atoms.get_atomic_numbers()),
-                            final_numbers=(relaxed_atoms.get_atomic_numbers()),
-                            initial_pbc=target.atoms.get_pbc(),
-                            final_pbc=relaxed_atoms.get_pbc(),
-                            cell_mode="fixed",
-                        )
-                        relaxation_summary.update(verified_transition)
-                        final_structure_fingerprint = _structure_fingerprint(
-                            relaxed_atoms
-                        )
-                        final_area = _authoritative_interface_area(relaxed_atoms)
-                        if not isclose(
-                            final_area,
-                            float(target.metadata["reference_area_A2"]),
-                            rel_tol=1e-10,
-                            abs_tol=1e-10,
-                        ):
-                            raise ValueError(
-                                "Relaxed surface cell area changed during the "
-                                "fixed-cell "
-                                "reference protocol."
-                            )
-                    else:
-                        n_steps = _reference_step_count(
-                            computed.n_steps,
-                            relaxed_surface=False,
-                        )
-                        relaxation_summary = None
-                        final_structure_fingerprint = None
-                except Exception as exc:
-                    failure = {
-                        "message": str(exc),
-                        "exception_type": type(exc).__name__,
-                        "module": type(exc).__module__,
-                    }
                     reference_metadata = {
                         key: value
                         for key, value in target.metadata.items()
                         if key != "formula_id"
                     }
-                    failed_payload = {
+                    row_payload = {
                         "schema": REFERENCE_ENERGY_RESULT_SCHEMA,
                         "version": ENERGY_RESULT_VERSION,
-                        "result_stage": "reference_failed",
+                        "result_stage": "reference_evaluated",
                         "reference": {
                             "uid_full": target.reference_uid_full,
                             "kind": target.reference_kind,
                             "side": target.side,
                             "formula_id": formula,
                             "metadata": reference_metadata,
+                        },
+                        "energy": {
+                            "total_eV": energy,
+                            "per_formula_unit_eV": energy_per_fu,
+                            "n_steps": n_steps,
                         },
                         "backend": {
                             "name": self._backend_name,
@@ -1173,16 +1269,19 @@ class ReferenceEnergyOrchestrator:
                         "relaxation": (
                             {
                                 "settings": dict(relaxation_settings or {}),
-                                "summary": {},
-                                "final_structure_fingerprint": None,
+                                "summary": dict(relaxation_summary or {}),
+                                "final_structure_fingerprint": (
+                                    final_structure_fingerprint
+                                ),
                             }
                             if formula == "work_of_adhesion_relaxed_surfaces"
                             else None
                         ),
                         "workflow_metadata": dict(user_payload),
-                        "failure": failure,
+                        "artifact_refs": artifact_refs,
+                        "summary": dict(computed.summary or {}),
                     }
-                    failed = FollowupResult(
+                    followup = FollowupResult(
                         uid_full=followup_uid,
                         id_short=followup_id,
                         run_uid_full=run.uid_full,
@@ -1194,151 +1293,66 @@ class ReferenceEnergyOrchestrator:
                         target_uid_full=target.source_interface_uid_full,
                         target_kind="interface",
                         kind="reference_energy",
-                        status="failed",
-                        best_energy=None,
-                        param1=None,
-                        param2=None,
-                        n_points=None,
-                        payload=failed_payload,
+                        status="done",
+                        best_energy=energy,
+                        param1=energy_per_fu,
+                        param2=(
+                            float(target.metadata["interface_formula_units"])
+                            if target.metadata.get("interface_formula_units") is not None
+                            else None
+                        ),
+                        n_points=n_steps,
+                        payload=row_payload,
                     )
-                    persist_followups_with_edges(uow=uow, followups=[failed])
+                    completed.append(followup)
                     stage_results.append(
                         ReferenceEnergyStageResult(
                             source_interface_uid=target.source_interface_uid_full,
                             prototype_uid=target.prototype_uid_full,
                             reference_kind=target.reference_kind,
                             side=target.side,
-                            status="failed",
+                            status="completed",
                             run_uid=run.uid_full,
                             followup_uid=followup_uid,
-                            reason=str(exc),
+                            energy_eV=energy,
+                            energy_eV_per_formula_unit=energy_per_fu,
                         )
                     )
-                    continue
 
-                energy_per_fu = None
-                reference_formula_units = target.metadata.get("reference_formula_units")
-                if reference_formula_units is not None:
-                    reference_formula_units = _positive_integer(
-                        reference_formula_units,
-                        name="Reference formula-unit count",
-                    )
-                    energy_per_fu = energy / reference_formula_units
-                artifact_refs = persist_artifact_payloads(
-                    uow=uow,
-                    run_uid=run.uid_full,
-                    proto_uid=target.prototype_uid_full,
-                    target_uid=target.reference_uid_full,
-                    artifact_payloads=computed.artifact_payloads,
-                    artifacts=self._artifacts,
-                )
-                reference_metadata = {
-                    key: value
-                    for key, value in target.metadata.items()
-                    if key != "formula_id"
-                }
-                row_payload = {
-                    "schema": REFERENCE_ENERGY_RESULT_SCHEMA,
-                    "version": ENERGY_RESULT_VERSION,
-                    "result_stage": "reference_evaluated",
-                    "reference": {
-                        "uid_full": target.reference_uid_full,
-                        "kind": target.reference_kind,
-                        "side": target.side,
-                        "formula_id": formula,
-                        "metadata": reference_metadata,
-                    },
-                    "energy": {
-                        "total_eV": energy,
-                        "per_formula_unit_eV": energy_per_fu,
-                        "n_steps": n_steps,
-                    },
-                    "backend": {
-                        "name": self._backend_name,
-                        "identity": dict(backend_identity),
-                        "settings": {
-                            key: value
-                            for key, value in calculation_dict.items()
-                            if key != "reference_relaxation"
-                        },
-                    },
-                    "relaxation": (
-                        {
-                            "settings": dict(relaxation_settings or {}),
-                            "summary": dict(relaxation_summary or {}),
-                            "final_structure_fingerprint": (
-                                final_structure_fingerprint
-                            ),
-                        }
-                        if formula == "work_of_adhesion_relaxed_surfaces"
-                        else None
-                    ),
-                    "workflow_metadata": dict(user_payload),
-                    "artifact_refs": artifact_refs,
-                    "summary": dict(computed.summary or {}),
-                }
-                followup = FollowupResult(
-                    uid_full=followup_uid,
-                    id_short=followup_id,
-                    run_uid_full=run.uid_full,
-                    run_id_short=run.id_short,
-                    prototype_uid_full=target.prototype_uid_full,
-                    prototype_id_short=uow.ids.ensure_prototype_id(
-                        target.prototype_uid_full
-                    ),
-                    target_uid_full=target.source_interface_uid_full,
-                    target_kind="interface",
-                    kind="reference_energy",
-                    status="done",
-                    best_energy=energy,
-                    param1=energy_per_fu,
-                    param2=(
-                        float(target.metadata["interface_formula_units"])
-                        if target.metadata.get("interface_formula_units") is not None
-                        else None
-                    ),
-                    n_points=n_steps,
-                    payload=row_payload,
-                )
-                completed.append(followup)
-                stage_results.append(
-                    ReferenceEnergyStageResult(
-                        source_interface_uid=target.source_interface_uid_full,
-                        prototype_uid=target.prototype_uid_full,
-                        reference_kind=target.reference_kind,
-                        side=target.side,
-                        status="completed",
-                        run_uid=run.uid_full,
-                        followup_uid=followup_uid,
-                        energy_eV=energy,
-                        energy_eV_per_formula_unit=energy_per_fu,
-                    )
-                )
+                if completed:
+                    persist_followups_with_edges(uow=uow, followups=completed)
+                    for row in completed:
+                        payload_row = dict(row.payload or {})
+                        reference = dict(payload_row["reference"])
+                        reference_metadata = dict(reference["metadata"])
+                        for source_key in ("source_bulk_uid_full", "source_slab_uid_full"):
+                            source_uid = reference_metadata.get(source_key)
+                            if not source_uid:
+                                continue
+                            uow.edges.add(
+                                src_uid_full=str(source_uid),
+                                dst_uid_full=row.uid_full,
+                                kind="reference_source_to_followup",
+                                payload={
+                                    "reference_kind": reference["kind"],
+                                    "source_role": source_key,
+                                },
+                            )
 
-            if completed:
-                persist_followups_with_edges(uow=uow, followups=completed)
-                for row in completed:
-                    payload_row = dict(row.payload or {})
-                    reference = dict(payload_row["reference"])
-                    reference_metadata = dict(reference["metadata"])
-                    for source_key in ("source_bulk_uid_full", "source_slab_uid_full"):
-                        source_uid = reference_metadata.get(source_key)
-                        if not source_uid:
-                            continue
-                        uow.edges.add(
-                            src_uid_full=str(source_uid),
-                            dst_uid_full=row.uid_full,
-                            kind="reference_source_to_followup",
-                            payload={
-                                "reference_kind": reference["kind"],
-                                "source_role": source_key,
-                            },
-                        )
-
-        run = finalize_run_state_and_refresh(
-            self._runs,
-            run,
-            stage_results,
-            n_requested=len(prepared),
-        )
-        return run, stage_results
+            run = finalize_run_state_and_refresh(
+                self._runs,
+                run,
+                stage_results,
+                n_requested=len(prepared),
+            )
+            return run, stage_results
+        except Exception as exc:
+            self._runs.mark_failed(
+                run.uid_full,
+                error={
+                    "message": str(exc),
+                    "exception_type": type(exc).__name__,
+                    "module": type(exc).__module__,
+                },
+            )
+            raise

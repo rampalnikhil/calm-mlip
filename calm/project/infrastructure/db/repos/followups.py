@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping, Optional, Sequence
 
-from sqlalchemy import Connection, insert, select
+from sqlalchemy import Connection, insert, select, update
 
 from calm.project.domain.contracts.energy_result import (
     ENERGY_RESULT_KINDS,
@@ -28,6 +28,25 @@ from ..tables import runs as runs_t
 
 
 _FOLLOWUP_STATUS_PAYLOAD_KEY = "_calm_followup_status"
+_RETRYABLE_RESULT_KINDS = ENERGY_RESULT_KINDS | {"relaxation_stage"}
+
+
+def _retry_configuration(kind: str, payload: Mapping[str, Any]) -> Any:
+    """Extract inputs that must stay identical when replacing a failed attempt."""
+
+    if kind == "relaxation_stage":
+        return tuple(
+            payload.get(key)
+            for key in ("relaxation_backend", "backend_identity", "relaxation_settings")
+        )
+    if kind == "reference_energy":
+        relaxation = payload.get("relaxation") or {}
+        return (
+            payload.get("backend"), payload.get("reference"), relaxation.get("settings"),
+        )
+    if kind == "thermodynamic_quantity":
+        return payload.get("source"), payload.get("convention")
+    return payload.get("backend")
 
 
 class SqlAlchemyFollowupResultRepository(FollowupResultRepository):
@@ -100,9 +119,66 @@ class SqlAlchemyFollowupResultRepository(FollowupResultRepository):
                         "run, target, and result qualifier columns."
                     )
 
+            if res.kind == "relaxation_stage":
+                expected_uid = persisted_entity_uid_v2(
+                    "followup_result",
+                    followup_identity_payload(
+                        run_uid_full=res.run_uid_full,
+                        prototype_uid_full=res.prototype_uid_full,
+                        target_uid_full=res.target_uid_full,
+                        target_kind=res.target_kind,
+                        kind=res.kind,
+                    ),
+                )
+                if res.uid_full != expected_uid:
+                    raise ValueError(
+                        "Relaxation follow-up identity does not match its run and target."
+                    )
+                if (
+                    payload.get("target_uid_full") != res.target_uid_full
+                    or payload.get("target_kind") != res.target_kind
+                ):
+                    raise ValueError("Relaxation follow-up payload does not match its target.")
+
             existing = self.get_by_uid_full(res.uid_full)
             if existing is not None:
-                if res.kind in REFINEMENT_RESULT_KINDS | ENERGY_RESULT_KINDS:
+                if (
+                    existing.kind == res.kind
+                    and res.kind in _RETRYABLE_RESULT_KINDS
+                    and existing.status == "failed"
+                    and res.status in {"failed", "done", "completed"}
+                    and existing.run_uid_full == res.run_uid_full
+                    and existing.prototype_uid_full == res.prototype_uid_full
+                    and existing.target_uid_full == res.target_uid_full
+                    and existing.target_kind == res.target_kind
+                    and _retry_configuration(res.kind, existing.payload or {})
+                    == _retry_configuration(res.kind, payload)
+                ):
+                    # Replace failed attempts only. Completed scientific results
+                    # remain immutable, including when a later retry fails.
+                    stored_payload = dict(payload)
+                    stored_payload[_FOLLOWUP_STATUS_PAYLOAD_KEY] = res.status
+                    self._conn.execute(
+                        update(followup_results_t)
+                        .where(followup_results_t.c.uid_full == res.uid_full)
+                        .values(
+                            best_energy=res.best_energy,
+                            param1=res.param1,
+                            param2=res.param2,
+                            n_points=res.n_points,
+                            payload_json=json.dumps(
+                                stored_payload,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                                allow_nan=False,
+                            ),
+                        )
+                    )
+                    refreshed = self.get_by_uid_full(res.uid_full)
+                    assert refreshed is not None
+                    saved.append(refreshed)
+                    continue
+                if res.kind in REFINEMENT_RESULT_KINDS | _RETRYABLE_RESULT_KINDS:
                     if (
                         existing.status != str(res.status or "done")
                         or existing.payload != payload
@@ -113,7 +189,7 @@ class SqlAlchemyFollowupResultRepository(FollowupResultRepository):
                     ):
                         category = (
                             "refinement"
-                            if res.kind in REFINEMENT_RESULT_KINDS
+                            if res.kind in REFINEMENT_RESULT_KINDS | {"relaxation_stage"}
                             else "energy"
                         )
                         raise ValueError(

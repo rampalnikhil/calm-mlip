@@ -45,7 +45,8 @@ def material_from_input(obj: Any, *, name: str | None = None):
             metadata=metadata,
         )
         optimized_with = (
-            obj.get("optimized_with")
+            obj.get("optimized_with_calculator_uid_full")
+            or obj.get("optimized_with")
             or obj.get("calculator")
             or metadata.get("optimized_with")
             or metadata.get("calculator")

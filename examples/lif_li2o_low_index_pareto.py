@@ -14,13 +14,14 @@ configuring a calculator after a geometry-only search cannot supply that
 provenance retroactively.
 
 Place this file in CALM's ``examples/`` directory to keep generated work under
-``examples/work/``. Re-running the program resumes identical completed searches.
+``examples/work/``. Bulk optimizations are reused; matching is rerun with
+``resume=False`` so the enumeration audits are regenerated.
 
 Required installation extras::
 
     python -m pip install -e ".[science,plot,grace]"
 
-Generated artifacts are written below ``WORK_DIR / "outputs-grace"``.
+Generated artifacts are written below ``WORK_DIR / "outputs-grace-eps020"``.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ from calm import (
     tutorial_structure,
 )
 from matplotlib.lines import Line2D
-from matplotlib.ticker import MultipleLocator, PercentFormatter
+from matplotlib.ticker import MaxNLocator, PercentFormatter
 
 
 # -----------------------------------------------------------------------------
@@ -47,7 +48,7 @@ from matplotlib.ticker import MultipleLocator, PercentFormatter
 SCRIPT_DIR = Path(__file__).resolve().parent
 WORK_DIR = SCRIPT_DIR / "work" / "lif-li2o-low-index-pareto"
 PROJECT_DIR = WORK_DIR / "lif-li2o-low-index-grace.calm"
-OUTPUT_DIR = WORK_DIR / "outputs-grace"
+OUTPUT_DIR = WORK_DIR / "outputs-grace-eps020"
 
 MILLERS = (
     (1, 0, 0),
@@ -83,19 +84,20 @@ SURFACE_SELECTORS = {
 SURFACE_LAYERS = 3
 SURFACE_VACUUM_A = 10.0
 
-# These settings define the expanded, low-strain enumeration used for this
-# figure. A large retained-result ceiling is used because the figure must
+# Admit max(abs(eig(E))) <= 0.20 for the 2D logarithmic strain tensor E.
+# This is not a Frobenius-norm cutoff: ||E||_F can reach sqrt(2) * 0.20.
+# A large retained-result ceiling is used because the figure must
 # contain every unique candidate admitted within these bounds. The
 # enumeration-audit check below fails loudly if this ceiling is ever reached.
 SEARCH_SETTINGS = SearchSettings(
-    max_principal_strain=0.03,
+    max_principal_strain=0.20,
     max_supercell_index=50,
     max_atoms=1000,
     max_candidates=100_000,
     mismatch_weight=0.5,
 )
 
-SEARCH_PREFIX = "lif-li2o-low-index-v1"
+SEARCH_PREFIX = "lif-li2o-low-index-eps020-v1"
 
 # Set this to True for a self-contained panel or False when a shared legend is
 # supplied during multipanel assembly. Enabling the legend adds a dedicated
@@ -435,7 +437,7 @@ def main() -> None:
     ax.set_ylabel(
         r"Log. strain, $\|\mathbf{E}\|_\mathrm{F}$ (%)"
     )
-    ax.yaxis.set_major_locator(MultipleLocator(0.01))
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=6))
     ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0, decimals=0))
     ax.set_ylim(
         0.0,

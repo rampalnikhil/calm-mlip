@@ -117,12 +117,27 @@ class SqlAlchemyBulkRepository(BulkRepository):
         existing = self.get_by_uid_full(bulk.uid_full)
         id_short = bulk.id_short or self._ids.ensure_bulk_id(bulk.uid_full)
 
+        kind = bulk.kind or "reference"
+        calculator_uid = bulk.optimized_with_calculator_uid_full
+        if existing is not None:
+            existing_calculator = existing.optimized_with_calculator_uid_full
+            if (
+                existing_calculator is not None
+                and calculator_uid is not None
+                and existing_calculator != calculator_uid
+            ):
+                raise ValueError(
+                    "An existing bulk cannot change its optimization calculator."
+                )
+            if existing.kind == "optimized":
+                kind = existing.kind
+            if existing_calculator is not None:
+                calculator_uid = existing_calculator
+
         mutable_values = {
             "label": bulk.label,
-            "kind": bulk.kind or "reference",
-            "optimized_with_calculator_uid_full": (
-                bulk.optimized_with_calculator_uid_full
-            ),
+            "kind": kind,
+            "optimized_with_calculator_uid_full": calculator_uid,
             "payload_json": json.dumps(payload),
             "updated_at": func.current_timestamp(),
         }

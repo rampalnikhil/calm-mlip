@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping, Optional, Sequence
 
-from sqlalchemy import Connection, insert, select, update
+from sqlalchemy import Connection, delete, insert, or_, select, update
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.sql import func
 
@@ -18,17 +18,24 @@ from calm.analysis.pareto import (
 )
 from ....domain.models import Prototype, PrototypeSummary
 from ....ports.repos import PrototypeRepository
+from ..tables import edges as edges_t
 from ..tables import prototypes as prototypes_t
 from ..tables import runs as runs_t
 from ..tables import slabs as slabs_t
 from ._common import datetime_to_text as _dt_to_str
+from .lineage import SqlAlchemyEdgeRepository
+
+
+_RUN_SNAPSHOT_KIND = "prototype_run_snapshot"
 
 
 class SqlAlchemyPrototypeRepository(PrototypeRepository):
     """Prototype persistence for Workspace v2.
 
-    This is deliberately conservative: a prototype is a row with a handful of
-    numeric metrics and a JSON payload for extensibility.
+    The canonical row describes the most recent observation of a scientific
+    identity. Before changing its run, retain the outgoing observation in the
+    existing edges table. Run-scoped queries recover that run's exact metrics
+    and payload; unscoped queries continue to return one row per identity.
     """
 
     def __init__(self, conn: Connection) -> None:
@@ -66,6 +73,8 @@ class SqlAlchemyPrototypeRepository(PrototypeRepository):
         stored: list[Prototype] = []
         for proto in prototypes:
             existing = self.get_by_uid_full(proto.uid_full)
+            if existing is not None and existing.run_uid_full != proto.run_uid_full:
+                self._save_run_snapshot(existing)
             mutable_values = {
                 "run_uid_full": proto.run_uid_full,
                 "slab_a_uid_full": proto.slab_a_uid_full,
@@ -104,6 +113,102 @@ class SqlAlchemyPrototypeRepository(PrototypeRepository):
 
         return stored
 
+    def _save_run_snapshot(self, proto: Prototype) -> None:
+        """Keep one transactional snapshot per (run, scientific prototype).
+
+        These are internal observations, separate from run_to_prototype lineage.
+        Replacing an observation supports A -> B -> A -> B upserts, including
+        returning to a previously stored payload, without stale hash ordering.
+        No database schema migration is required.
+        """
+        self._conn.execute(
+            delete(edges_t).where(
+                edges_t.c.src_uid_full == proto.run_uid_full,
+                edges_t.c.dst_uid_full == proto.uid_full,
+                edges_t.c.kind == _RUN_SNAPSHOT_KIND,
+            )
+        )
+        SqlAlchemyEdgeRepository(self._conn).add(
+            src_uid_full=proto.run_uid_full,
+            dst_uid_full=proto.uid_full,
+            kind=_RUN_SNAPSHOT_KIND,
+            payload={
+                "run_uid_full": proto.run_uid_full,
+                "run_id_short": proto.run_id_short,
+                "match_score": proto.match_score,
+                "hencky_norm": proto.hencky_norm,
+                "interface_area": proto.interface_area,
+                "n_atoms": proto.natoms,
+                "is_pareto": proto.is_pareto,
+                "pareto_rank": proto.pareto_rank,
+                "payload_json": json.dumps(proto.payload),
+                "created_at": proto.created_at,
+            },
+        )
+
+    def _query_run_rows(
+        self,
+        run_uid_full: str,
+        *,
+        max_hencky_norm: float | None,
+        min_match_score: float | None,
+        order_by: str | None,
+    ) -> list[dict[str, Any]]:
+        snapshots = {
+            edge.dst_uid_full: edge.payload
+            for edge in SqlAlchemyEdgeRepository(self._conn).list(
+                src_uid_full=run_uid_full, kind=_RUN_SNAPSHOT_KIND
+            )
+        }
+        snapshot_uids = select(edges_t.c.dst_uid_full).where(
+            edges_t.c.src_uid_full == run_uid_full,
+            edges_t.c.kind == _RUN_SNAPSHOT_KIND,
+        )
+        stmt = self._select_with_run_id_short().where(
+            or_(
+                prototypes_t.c.run_uid_full == run_uid_full,
+                prototypes_t.c.uid_full.in_(snapshot_uids),
+            )
+        ).order_by(prototypes_t.c.prototype_pk.asc())
+        rows = []
+        for stored in self._conn.execute(stmt).mappings().all():
+            row = dict(stored)
+            if row["run_uid_full"] != run_uid_full:
+                row.update(snapshots[row["uid_full"]])
+            # Filters and ordering must use the selected run's observation,
+            # never the canonical row's metrics from a later search.
+            if max_hencky_norm is not None and (
+                row["hencky_norm"] is None or row["hencky_norm"] > max_hencky_norm
+            ):
+                continue
+            if min_match_score is not None and (
+                row["match_score"] is None or row["match_score"] < min_match_score
+            ):
+                continue
+            row["created_at"] = _dt_to_str(row.get("created_at"))
+            rows.append(row)
+        if order_by:
+            defaults = {
+                "match_score": False,
+                "hencky_norm": False,
+                "interface_area": True,
+                "n_atoms": False,
+                "created_at": True,
+            }
+            key = order_by[1:] if order_by[0] in "+-" else order_by
+            if key in defaults:
+                descending = (
+                    order_by.startswith("-")
+                    if order_by[0] in "+-"
+                    else defaults[key]
+                )
+                # SQLite sorts NULL first ascending, last descending.
+                rows.sort(
+                    key=lambda row: (row[key] is not None, row[key]),
+                    reverse=descending,
+                )
+        return rows
+
     def get_by_uid_full(self, uid_full: str) -> Optional[Prototype]:
         row = (
             self._conn.execute(
@@ -137,9 +242,15 @@ class SqlAlchemyPrototypeRepository(PrototypeRepository):
         order_by: str | None = None,
         limit: int | None = None,
     ) -> list[PrototypeSummary]:
-        stmt = self._select_with_run_id_short()
         if run_uid_full is not None:
-            stmt = stmt.where(prototypes_t.c.run_uid_full == run_uid_full)
+            rows = self._query_run_rows(
+                run_uid_full,
+                max_hencky_norm=max_hencky_norm,
+                min_match_score=min_match_score,
+                order_by=order_by,
+            )
+            return self._summaries(rows, pareto_only=pareto_only, limit=limit)
+        stmt = self._select_with_run_id_short()
         if max_hencky_norm is not None:
             stmt = stmt.where(prototypes_t.c.hencky_norm <= max_hencky_norm)
         if min_match_score is not None:
@@ -185,7 +296,17 @@ class SqlAlchemyPrototypeRepository(PrototypeRepository):
             stmt = stmt.limit(limit)
 
         rows = self._conn.execute(stmt).mappings().all()
-        summaries = [self._row_to_prototype_summary(row) for row in rows]
+        return self._summaries(rows, pareto_only=pareto_only, limit=limit)
+
+    @classmethod
+    def _summaries(
+        cls,
+        rows: Sequence[Mapping[str, Any]],
+        *,
+        pareto_only: bool | None,
+        limit: int | None,
+    ) -> list[PrototypeSummary]:
+        summaries = [cls._row_to_prototype_summary(row) for row in rows]
         if pareto_only is True:
             summaries = [
                 summary
@@ -197,8 +318,8 @@ class SqlAlchemyPrototypeRepository(PrototypeRepository):
                 and summary.pareto_population_scope
                 == STRAIN_SIZE_PARETO_POPULATION_SCOPE
             ]
-            if limit is not None:
-                summaries = summaries[: int(limit)]
+        if limit is not None and limit >= 0:
+            summaries = summaries[: int(limit)]
         return summaries
 
     @staticmethod

@@ -212,7 +212,10 @@ class EnergyOrchestrator:
                 )
                 uow.commit()
 
-        if resume and run.status == "done":
+        if (
+            resume and not partial_resume and run.status == "done"
+            and not (run.progress or {}).get("n_failed", 0)
+        ):
             skipped = [
                 EnergyStageResult(
                     target_uid=target.get("target_uid_full")
@@ -234,82 +237,155 @@ class EnergyOrchestrator:
             run.uid_full,
             progress={"stage": "energy", "n_requested": len(targets)},
         )
-        existing = (
-            self._existing_followups(run_uid_full=run.uid_full)
-            if partial_resume
-            else {}
-        )
+        try:
+            existing = (
+                self._existing_followups(run_uid_full=run.uid_full)
+                if partial_resume
+                else {}
+            )
 
-        stage_results: list[EnergyStageResult] = []
-        completed_followups: list[FollowupResult] = []
-        with self._uow as uow:
-            for target in targets:
-                prototype_uid = target["prototype_uid_full"]
-                target_uid = target["target_uid_full"]
-                target_kind = target["target_kind"]
-                key = (prototype_uid, target_uid)
-                if key in existing:
-                    row = existing[key]
-                    stage_results.append(
-                        EnergyStageResult(
-                            target_uid=target_uid,
-                            target_kind=target_kind,
-                            prototype_uid=prototype_uid,
-                            status="skipped",
-                            reason="existing_followup",
-                            run_uid=run.uid_full,
-                            followup_uid=row.uid_full,
-                            energy=(row.payload or {})["energy_eV"],
-                            energy_units="eV",
-                            artifact_refs=(row.payload or {})["artifact_refs"],
-                        )
-                    )
-                    continue
-
-                followup_uid = persisted_followup_uid(
-                    run_uid_full=run.uid_full,
-                    prototype_uid_full=prototype_uid,
-                    target_uid_full=target_uid,
-                    target_kind=target_kind,
-                    kind="energy_stage",
-                )
-                followup_id = uow.ids.ensure_short_id(uid_full=followup_uid, tag="f")
-                compute_config = dict(calculation_dict)
-                target_atoms = self._load_target_atoms(target_uid, target_kind)
-                if target_atoms is not None:
-                    compute_config["target_atoms"] = target_atoms
-
-                interface_area_A2: float | None = None
-                try:
-                    if target_kind == "interface":
-                        if target_atoms is None:
-                            raise ValueError(
-                                "Authoritative interface atoms are required to record "
-                                "the thermodynamic normalization area."
+            stage_results: list[EnergyStageResult] = []
+            completed_followups: list[FollowupResult] = []
+            with self._uow as uow:
+                for target in targets:
+                    prototype_uid = target["prototype_uid_full"]
+                    target_uid = target["target_uid_full"]
+                    target_kind = target["target_kind"]
+                    key = (prototype_uid, target_uid)
+                    if key in existing:
+                        row = existing[key]
+                        stage_results.append(
+                            EnergyStageResult(
+                                target_uid=target_uid,
+                                target_kind=target_kind,
+                                prototype_uid=prototype_uid,
+                                status="skipped",
+                                reason="existing_followup",
+                                run_uid=run.uid_full,
+                                followup_uid=row.uid_full,
+                                energy=(row.payload or {})["energy_eV"],
+                                energy_units="eV",
+                                artifact_refs=(row.payload or {})["artifact_refs"],
                             )
-                        interface_area_A2 = _interface_area_A2_from_atoms(target_atoms)
-                    compute_result = self._backend.compute(
-                        run_uid=run.uid_full,
-                        prototype_uid=prototype_uid,
-                        target_uid=target_uid,
-                        config=compute_config,
+                        )
+                        continue
+
+                    followup_uid = persisted_followup_uid(
+                        run_uid_full=run.uid_full,
+                        prototype_uid_full=prototype_uid,
+                        target_uid_full=target_uid,
+                        target_kind=target_kind,
+                        kind="energy_stage",
+                    )
+                    followup_id = uow.ids.ensure_short_id(uid_full=followup_uid, tag="f")
+                    compute_config = dict(calculation_dict)
+                    interface_area_A2: float | None = None
+                    try:
+                        target_atoms = self._load_target_atoms(target_uid, target_kind)
+                        if target_atoms is not None:
+                            compute_config["target_atoms"] = target_atoms
+                        if target_kind == "interface":
+                            if target_atoms is None:
+                                raise ValueError(
+                                    "Authoritative interface atoms are required to record "
+                                    "the thermodynamic normalization area."
+                                )
+                            interface_area_A2 = _interface_area_A2_from_atoms(target_atoms)
+                        compute_result = self._backend.compute(
+                            run_uid=run.uid_full,
+                            prototype_uid=prototype_uid,
+                            target_uid=target_uid,
+                            config=compute_config,
+                            uow=uow,
+                        )
+                        energy = _finite_float(
+                            compute_result.energy,
+                            name="Computed total energy",
+                        )
+                        n_steps = _positive_integer(
+                            compute_result.n_steps,
+                            name="Computed energy step count",
+                        )
+                    except Exception as exc:
+                        failure = {
+                            "message": str(exc),
+                            "exception_type": type(exc).__name__,
+                            "module": type(exc).__module__,
+                        }
+                        failed = FollowupResult(
+                            uid_full=followup_uid,
+                            id_short=followup_id,
+                            run_uid_full=run.uid_full,
+                            run_id_short=run.id_short,
+                            prototype_uid_full=prototype_uid,
+                            prototype_id_short=uow.ids.ensure_prototype_id(prototype_uid),
+                            target_uid_full=target_uid,
+                            target_kind=target_kind,
+                            kind="energy_stage",
+                            status="failed",
+                            best_energy=None,
+                            param1=None,
+                            param2=None,
+                            n_points=None,
+                            payload={
+                                "schema": RAW_ENERGY_RESULT_SCHEMA,
+                                "version": ENERGY_RESULT_VERSION,
+                                "result_stage": "energy_failed",
+                                "quantity": "total_energy",
+                                "backend": {
+                                    "name": self._backend_name,
+                                    "identity": dict(backend_identity),
+                                    "settings": dict(calculation_dict),
+                                },
+                                "workflow_metadata": dict(user_payload),
+                                "failure": failure,
+                            },
+                        )
+                        persist_followups_with_edges(uow=uow, followups=[failed])
+                        stage_results.append(
+                            EnergyStageResult(
+                                target_uid=target_uid,
+                                target_kind=target_kind,
+                                prototype_uid=prototype_uid,
+                                status="failed",
+                                reason=str(exc),
+                                run_uid=run.uid_full,
+                                followup_uid=followup_uid,
+                            )
+                        )
+                        continue
+
+                    artifact_refs = persist_artifact_payloads(
                         uow=uow,
+                        run_uid=run.uid_full,
+                        proto_uid=prototype_uid,
+                        target_uid=target_uid,
+                        artifact_payloads=compute_result.artifact_payloads,
+                        artifacts=self._artifacts,
                     )
-                    energy = _finite_float(
-                        compute_result.energy,
-                        name="Computed total energy",
-                    )
-                    n_steps = _positive_integer(
-                        compute_result.n_steps,
-                        name="Computed energy step count",
-                    )
-                except Exception as exc:
-                    failure = {
-                        "message": str(exc),
-                        "exception_type": type(exc).__name__,
-                        "module": type(exc).__module__,
+                    payload_row = {
+                        "schema": RAW_ENERGY_RESULT_SCHEMA,
+                        "version": ENERGY_RESULT_VERSION,
+                        "result_stage": "energy_evaluated",
+                        "quantity": "total_energy",
+                        "energy_eV": energy,
+                        "n_steps": n_steps,
+                        "interface_area_A2": interface_area_A2,
+                        "area_source": (
+                            "authoritative_interface_cell"
+                            if interface_area_A2 is not None
+                            else None
+                        ),
+                        "backend": {
+                            "name": self._backend_name,
+                            "identity": dict(backend_identity),
+                            "settings": dict(calculation_dict),
+                        },
+                        "workflow_metadata": dict(user_payload),
+                        "artifact_refs": artifact_refs,
+                        "summary": dict(compute_result.summary or {}),
                     }
-                    failed = FollowupResult(
+                    followup = FollowupResult(
                         uid_full=followup_uid,
                         id_short=followup_id,
                         run_uid_full=run.uid_full,
@@ -319,111 +395,52 @@ class EnergyOrchestrator:
                         target_uid_full=target_uid,
                         target_kind=target_kind,
                         kind="energy_stage",
-                        status="failed",
-                        best_energy=None,
+                        status="done",
+                        best_energy=energy,
                         param1=None,
                         param2=None,
-                        n_points=None,
-                        payload={
-                            "schema": RAW_ENERGY_RESULT_SCHEMA,
-                            "version": ENERGY_RESULT_VERSION,
-                            "result_stage": "energy_failed",
-                            "quantity": "total_energy",
-                            "backend": {
-                                "name": self._backend_name,
-                                "identity": dict(backend_identity),
-                                "settings": dict(calculation_dict),
-                            },
-                            "workflow_metadata": dict(user_payload),
-                            "failure": failure,
-                        },
+                        n_points=n_steps,
+                        payload=payload_row,
                     )
-                    persist_followups_with_edges(uow=uow, followups=[failed])
+                    completed_followups.append(followup)
                     stage_results.append(
                         EnergyStageResult(
                             target_uid=target_uid,
                             target_kind=target_kind,
                             prototype_uid=prototype_uid,
-                            status="failed",
-                            reason=str(exc),
+                            status="completed",
                             run_uid=run.uid_full,
                             followup_uid=followup_uid,
+                            energy=energy,
+                            energy_units="eV",
+                            artifact_refs=artifact_refs,
                         )
                     )
-                    continue
 
-                artifact_refs = persist_artifact_payloads(
-                    uow=uow,
-                    run_uid=run.uid_full,
-                    proto_uid=prototype_uid,
-                    target_uid=target_uid,
-                    artifact_payloads=compute_result.artifact_payloads,
-                    artifacts=self._artifacts,
-                )
-                payload_row = {
-                    "schema": RAW_ENERGY_RESULT_SCHEMA,
-                    "version": ENERGY_RESULT_VERSION,
-                    "result_stage": "energy_evaluated",
-                    "quantity": "total_energy",
-                    "energy_eV": energy,
-                    "n_steps": n_steps,
-                    "interface_area_A2": interface_area_A2,
-                    "area_source": (
-                        "authoritative_interface_cell"
-                        if interface_area_A2 is not None
-                        else None
-                    ),
-                    "backend": {
-                        "name": self._backend_name,
-                        "identity": dict(backend_identity),
-                        "settings": dict(calculation_dict),
-                    },
-                    "workflow_metadata": dict(user_payload),
-                    "artifact_refs": artifact_refs,
-                    "summary": dict(compute_result.summary or {}),
-                }
-                followup = FollowupResult(
-                    uid_full=followup_uid,
-                    id_short=followup_id,
-                    run_uid_full=run.uid_full,
-                    run_id_short=run.id_short,
-                    prototype_uid_full=prototype_uid,
-                    prototype_id_short=uow.ids.ensure_prototype_id(prototype_uid),
-                    target_uid_full=target_uid,
-                    target_kind=target_kind,
-                    kind="energy_stage",
-                    status="done",
-                    best_energy=energy,
-                    param1=None,
-                    param2=None,
-                    n_points=n_steps,
-                    payload=payload_row,
-                )
-                completed_followups.append(followup)
-                stage_results.append(
-                    EnergyStageResult(
-                        target_uid=target_uid,
-                        target_kind=target_kind,
-                        prototype_uid=prototype_uid,
-                        status="completed",
-                        run_uid=run.uid_full,
-                        followup_uid=followup_uid,
-                        energy=energy,
-                        energy_units="eV",
-                        artifact_refs=artifact_refs,
-                    )
-                )
+                if completed_followups:
+                    persist_followups_with_edges(uow=uow, followups=completed_followups)
 
-            if completed_followups:
-                persist_followups_with_edges(uow=uow, followups=completed_followups)
-
-        for result in unresolved_results:
-            result.run_uid = run.uid_full
-        stage_results.extend(unresolved_results)
-        run = finalize_run_state_and_refresh(
-            self._runs,
-            run,
-            stage_results,
-            n_requested=len(targets),
-        )
-        return run, stage_results
+            for result in unresolved_results:
+                result.run_uid = run.uid_full
+            stage_results.extend(unresolved_results)
+            run = finalize_run_state_and_refresh(
+                self._runs,
+                run,
+                stage_results,
+                n_requested=len(targets),
+                fail_on_any=True,
+            )
+            return run, stage_results
+        except Exception as exc:
+            # The work transaction has exited (and rolled back) before the run
+            # status is written in a fresh transaction. Infrastructure failures
+            # must remain visible to the caller as well as in persisted state.
+            self._runs.mark_failed(
+                run.uid_full,
+                error={
+                    "message": str(exc),
+                    "exception_type": type(exc).__name__,
+                    "module": type(exc).__module__,
+                },
+            )
+            raise

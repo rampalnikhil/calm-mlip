@@ -205,6 +205,7 @@ class DerivedInterfaceService:
             ),
         )
 
+        run_uid: str | None = None
         if atoms is not None:
             if self._artifacts is None:
                 raise RuntimeError(
@@ -216,6 +217,7 @@ class DerivedInterfaceService:
                 prototype_uid_full=prototype_uid_full,
                 artifact_run=artifact_run,
             )
+            existing = uow.derived_interfaces.get_by_uid_full(canonical_uid)
             artifact = self._artifacts.put_interface_atoms_in(
                 uow,
                 run_uid,
@@ -225,6 +227,9 @@ class DerivedInterfaceService:
                     f"interface_atoms_{canonical_uid.split(':', 1)[-1][:16]}.json"
                 ),
                 metadata={"prototype_uid_full": prototype_uid_full},
+                existing_artifact_uid=(
+                    existing.atoms_artifact_uid if existing is not None else None
+                ),
             )
             spec["atoms_artifact_uid"] = artifact.uid_full
             refs = list(spec.get("artifact_refs") or [])
@@ -237,6 +242,10 @@ class DerivedInterfaceService:
                 }
             )
             spec["artifact_refs"] = refs
+            if existing is not None and existing.atoms_artifact_uid is not None:
+                # Keep the authoritative reference metadata byte-for-byte in
+                # meaning; only the additional producing-run lineage is new.
+                spec = dict(existing.spec)
 
         spec = canonical_derived_interface_spec(
             spec,
@@ -266,6 +275,13 @@ class DerivedInterfaceService:
             kind="prototype_to_interface",
             payload=None,
         )
+        if run_uid is not None:
+            uow.edges.add(
+                src_uid_full=run_uid,
+                dst_uid_full=canonical_uid,
+                kind="run_to_interface",
+                payload={"atoms_artifact_uid": stored.atoms_artifact_uid},
+            )
         if seed_iface_uid_full is not None and seed_iface_uid_full != canonical_uid:
             uow.edges.add(
                 src_uid_full=seed_iface_uid_full,

@@ -11,6 +11,24 @@ import numpy as np
 from ._core import _as_2x2, sym2
 
 
+def _symmetric_eigenvalues(a: float, b: float, d: float) -> np.ndarray:
+    """Avoid subtracting nearly equal trace/radius terms for small eigenvalues."""
+    scale = max(abs(a), abs(b), abs(d))
+    if scale == 0.0:
+        return np.zeros(2, dtype=float)
+    a, b, d = a / scale, b / scale, d / scale
+    midpoint = 0.5 * (a + d)
+    radius = float(np.hypot(0.5 * (a - d), b))
+    # Compute the eigenvalue of larger magnitude without cancellation, then
+    # recover its partner from the determinant. This also handles indefinite
+    # and negative-definite matrices used by the symmetric/PSD helpers.
+    large = midpoint + np.copysign(radius, midpoint)
+    if large == 0.0:
+        return np.zeros(2, dtype=float)
+    small = (a * d - b * b) / large
+    return np.array(sorted((small, large)), dtype=float) * scale
+
+
 def eigvals2_spd(A: np.ndarray) -> np.ndarray:
     """
     Eigenvalues of a 2×2 real symmetric matrix via closed form.
@@ -23,11 +41,7 @@ def eigvals2_spd(A: np.ndarray) -> np.ndarray:
     b = float(A[0, 1])
     d = float(A[1, 1])
 
-    tr2 = 0.5 * (a + d)
-    diff2 = 0.5 * (a - d)
-    delta = np.hypot(diff2, b)
-
-    return np.array([tr2 - delta, tr2 + delta], dtype=float)
+    return _symmetric_eigenvalues(a, b, d)
 
 
 def eigh2_sym(
@@ -63,13 +77,8 @@ def eigh2_sym(
     b = float(A[0, 1])
     d = float(A[1, 1])
 
-    tr2 = 0.5 * (a + d)
-    diff2 = 0.5 * (a - d)
-    delta = np.hypot(diff2, b)
-
-    w0 = tr2 - delta
-    w1 = tr2 + delta
-    w = np.array([w0, w1], dtype=float)
+    w = _symmetric_eigenvalues(a, b, d)
+    w0 = float(w[0])
 
     if b_tol is None:
         scale = max(abs(a), abs(b), abs(d))

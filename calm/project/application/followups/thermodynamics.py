@@ -437,7 +437,10 @@ class ThermodynamicOrchestrator:
         spec = self._run_spec(raw_rows, canonical_convention, references)
         run = self._runs.create(run_type="thermodynamic_derivation", spec=spec)
 
-        if resume and run.status == "done":
+        if (
+            resume and not partial_resume and run.status == "done"
+            and not (run.progress or {}).get("n_failed", 0)
+        ):
             return run, [
                 ThermodynamicStageResult(
                     target_uid=str(row.target_uid_full or ""),
@@ -454,111 +457,194 @@ class ThermodynamicOrchestrator:
             run.uid_full,
             progress={"stage": "thermodynamics", "n_requested": len(raw_rows)},
         )
-        existing = self._existing(run.uid_full) if partial_resume else {}
-        stage_results: list[ThermodynamicStageResult] = []
-        completed: list[FollowupResult] = []
+        try:
+            existing = self._existing(run.uid_full) if partial_resume else {}
+            stage_results: list[ThermodynamicStageResult] = []
+            completed: list[FollowupResult] = []
 
-        with self._uow as uow:
-            for raw in raw_rows:
-                raw_uid = raw.uid_full
-                target_uid = str(raw.target_uid_full or "")
-                prototype_uid = raw.prototype_uid_full
-                if raw_uid in existing:
-                    row = existing[raw_uid]
-                    payload = dict(row.payload or {})
-                    stage_results.append(
-                        ThermodynamicStageResult(
-                            target_uid=target_uid,
-                            prototype_uid=prototype_uid,
-                            status="skipped",
-                            quantity=payload["quantity"]["name"],
-                            value_eV_per_A2=payload["quantity"]["value_eV_per_A2"],
-                            value_J_per_m2=payload["quantity"]["value_J_per_m2"],
-                            run_uid=run.uid_full,
-                            followup_uid=row.uid_full,
-                            raw_energy_followup_uid=raw_uid,
-                            reason="existing_followup",
-                        )
-                    )
-                    continue
-
-                followup_uid = persisted_followup_uid(
-                    run_uid_full=run.uid_full,
-                    prototype_uid_full=prototype_uid,
-                    target_uid_full=target_uid,
-                    target_kind=raw.target_kind,
-                    kind="thermodynamic_quantity",
-                    qualifiers={"raw_energy_followup_uid": raw_uid},
-                )
-                followup_id = uow.ids.ensure_short_id(uid_full=followup_uid, tag="f")
-                target_references: dict[str, Any] | None = None
-                persisted_references: dict[str, Any] = {
-                    "status": "unresolved",
-                    "reason": (
-                        "thermodynamic_derivation_failed_before_reference_resolution"
-                    ),
-                }
-                compatibility: dict[str, Any] = {
-                    "status": "unresolved",
-                    "reason": (
-                        "thermodynamic_derivation_failed_before_calculator_"
-                        "compatibility_verification"
-                    ),
-                }
-                area_status: str | None = None
-                try:
-                    target_references = self._references_for_target(
-                        references,
-                        target_uid,
-                    )
-                    prototype = uow.prototypes.get_by_uid_full(prototype_uid)
-                    if prototype is None:
-                        raise KeyError(f"Prototype not found: {prototype_uid}")
-                    area_A2, area_status = _prototype_normalization_area(
-                        uow,
-                        raw=raw,
-                        prototype=prototype,
-                        area_source=str(canonical_convention["area_source"]),
-                    )
-                    raw_payload = dict(raw.payload or {})
-                    raw_quantity = raw_payload.get("quantity")
-                    if raw_quantity not in {None, "total_energy"}:
-                        raise ValueError(
-                            "Thermodynamic derivation requires a raw total-energy "
-                            "result."
-                        )
-                    reference_formula = target_references.get("formula_id")
-                    if reference_formula is not None:
-                        reference_formula, _ = canonical_energy_formula(
-                            str(reference_formula)
-                        )
-                        if reference_formula != formula:
-                            raise ValueError(
-                                "Reference-energy formula does not match the requested "
-                                "thermodynamic convention."
+            with self._uow as uow:
+                for raw in raw_rows:
+                    raw_uid = raw.uid_full
+                    target_uid = str(raw.target_uid_full or "")
+                    prototype_uid = raw.prototype_uid_full
+                    if raw_uid in existing:
+                        row = existing[raw_uid]
+                        payload = dict(row.payload or {})
+                        stage_results.append(
+                            ThermodynamicStageResult(
+                                target_uid=target_uid,
+                                prototype_uid=prototype_uid,
+                                status="skipped",
+                                quantity=payload["quantity"]["name"],
+                                value_eV_per_A2=payload["quantity"]["value_eV_per_A2"],
+                                value_J_per_m2=payload["quantity"]["value_J_per_m2"],
+                                run_uid=run.uid_full,
+                                followup_uid=row.uid_full,
+                                raw_energy_followup_uid=raw_uid,
+                                reason="existing_followup",
                             )
-                    persisted_references = _persisted_reference_bundle(
-                        target_references,
-                        formula=formula,
+                        )
+                        continue
+
+                    followup_uid = persisted_followup_uid(
+                        run_uid_full=run.uid_full,
+                        prototype_uid_full=prototype_uid,
+                        target_uid_full=target_uid,
+                        target_kind=raw.target_kind,
+                        kind="thermodynamic_quantity",
+                        qualifiers={"raw_energy_followup_uid": raw_uid},
                     )
-                    compatibility = _reference_calculator_compatibility(
-                        raw_payload,
-                        target_references,
-                    )
-                    energy_eV = raw_payload["energy_eV"]
-                    quantity, value, components = derive_thermodynamic_quantity(
-                        interface_total_energy_eV=energy_eV,
-                        area_A2=area_A2,
-                        convention=canonical_convention,
-                        references=target_references,
-                    )
-                except Exception as exc:
-                    failure = {
-                        "message": str(exc),
-                        "exception_type": type(exc).__name__,
-                        "module": type(exc).__module__,
+                    followup_id = uow.ids.ensure_short_id(uid_full=followup_uid, tag="f")
+                    target_references: dict[str, Any] | None = None
+                    persisted_references: dict[str, Any] = {
+                        "status": "unresolved",
+                        "reason": (
+                            "thermodynamic_derivation_failed_before_reference_resolution"
+                        ),
                     }
-                    failed = FollowupResult(
+                    compatibility: dict[str, Any] = {
+                        "status": "unresolved",
+                        "reason": (
+                            "thermodynamic_derivation_failed_before_calculator_"
+                            "compatibility_verification"
+                        ),
+                    }
+                    area_status: str | None = None
+                    try:
+                        target_references = self._references_for_target(
+                            references,
+                            target_uid,
+                        )
+                        prototype = uow.prototypes.get_by_uid_full(prototype_uid)
+                        if prototype is None:
+                            raise KeyError(f"Prototype not found: {prototype_uid}")
+                        area_A2, area_status = _prototype_normalization_area(
+                            uow,
+                            raw=raw,
+                            prototype=prototype,
+                            area_source=str(canonical_convention["area_source"]),
+                        )
+                        raw_payload = dict(raw.payload or {})
+                        raw_quantity = raw_payload.get("quantity")
+                        if raw_quantity not in {None, "total_energy"}:
+                            raise ValueError(
+                                "Thermodynamic derivation requires a raw total-energy "
+                                "result."
+                            )
+                        reference_formula = target_references.get("formula_id")
+                        if reference_formula is not None:
+                            reference_formula, _ = canonical_energy_formula(
+                                str(reference_formula)
+                            )
+                            if reference_formula != formula:
+                                raise ValueError(
+                                    "Reference-energy formula does not match the requested "
+                                    "thermodynamic convention."
+                                )
+                        persisted_references = _persisted_reference_bundle(
+                            target_references,
+                            formula=formula,
+                        )
+                        compatibility = _reference_calculator_compatibility(
+                            raw_payload,
+                            target_references,
+                        )
+                        energy_eV = raw_payload["energy_eV"]
+                        quantity, value, components = derive_thermodynamic_quantity(
+                            interface_total_energy_eV=energy_eV,
+                            area_A2=area_A2,
+                            convention=canonical_convention,
+                            references=target_references,
+                        )
+                    except Exception as exc:
+                        failure = {
+                            "message": str(exc),
+                            "exception_type": type(exc).__name__,
+                            "module": type(exc).__module__,
+                        }
+                        failed = FollowupResult(
+                            uid_full=followup_uid,
+                            id_short=followup_id,
+                            run_uid_full=run.uid_full,
+                            run_id_short=run.id_short,
+                            prototype_uid_full=prototype_uid,
+                            prototype_id_short=uow.ids.ensure_prototype_id(prototype_uid),
+                            target_uid_full=target_uid,
+                            target_kind=raw.target_kind,
+                            kind="thermodynamic_quantity",
+                            status="failed",
+                            best_energy=None,
+                            param1=None,
+                            param2=None,
+                            n_points=None,
+                            payload={
+                                "schema": THERMODYNAMIC_RESULT_SCHEMA,
+                                "version": ENERGY_RESULT_VERSION,
+                                "result_stage": "thermodynamic_failed",
+                                "source": {
+                                    "raw_energy_followup_uid": raw_uid,
+                                    "reference_mode": references.get("mode", "static"),
+                                    "reference_run_uid_full": references.get(
+                                        "reference_run_uid_full"
+                                    ),
+                                },
+                                "convention": dict(canonical_convention),
+                                "references": dict(persisted_references),
+                                "calculator_compatibility": dict(compatibility),
+                                "normalization_area_source_status": area_status,
+                                "failure": failure,
+                            },
+                        )
+                        persist_followups_with_edges(uow=uow, followups=[failed])
+                        stage_results.append(
+                            ThermodynamicStageResult(
+                                target_uid=target_uid,
+                                prototype_uid=prototype_uid,
+                                status="failed",
+                                run_uid=run.uid_full,
+                                followup_uid=followup_uid,
+                                raw_energy_followup_uid=raw_uid,
+                                reason=str(exc),
+                            )
+                        )
+                        continue
+
+                    value_j = _finite_float(
+                        float(value) * EV_PER_A2_TO_J_PER_M2,
+                        name="The converted thermodynamic quantity",
+                    )
+                    payload = {
+                        "schema": THERMODYNAMIC_RESULT_SCHEMA,
+                        "version": ENERGY_RESULT_VERSION,
+                        "result_stage": "thermodynamic_derived",
+                        "source": {
+                            "raw_energy_followup_uid": raw_uid,
+                            "reference_mode": references.get("mode", "static"),
+                            "reference_run_uid_full": references.get(
+                                "reference_run_uid_full"
+                            ),
+                        },
+                        "quantity": {
+                            "name": quantity,
+                            "formula_id": formula,
+                            "value_eV_per_A2": float(value),
+                            "value_J_per_m2": value_j,
+                        },
+                        "normalization": {
+                            "area_A2": area_A2,
+                            "area_source_status": area_status,
+                            "n_interfaces": int(canonical_convention["n_interfaces"]),
+                        },
+                        "convention": dict(canonical_convention),
+                        "references": dict(persisted_references),
+                        "components": components,
+                        "calculator_compatibility": dict(compatibility),
+                        "units": {
+                            "primary": "eV/angstrom^2",
+                            "secondary": "J/m^2",
+                        },
+                    }
+                    followup = FollowupResult(
                         uid_full=followup_uid,
                         id_short=followup_id,
                         run_uid_full=run.uid_full,
@@ -568,148 +654,76 @@ class ThermodynamicOrchestrator:
                         target_uid_full=target_uid,
                         target_kind=raw.target_kind,
                         kind="thermodynamic_quantity",
-                        status="failed",
-                        best_energy=None,
-                        param1=None,
-                        param2=None,
-                        n_points=None,
-                        payload={
-                            "schema": THERMODYNAMIC_RESULT_SCHEMA,
-                            "version": ENERGY_RESULT_VERSION,
-                            "result_stage": "thermodynamic_failed",
-                            "source": {
-                                "raw_energy_followup_uid": raw_uid,
-                                "reference_mode": references.get("mode", "static"),
-                                "reference_run_uid_full": references.get(
-                                    "reference_run_uid_full"
-                                ),
-                            },
-                            "convention": dict(canonical_convention),
-                            "references": dict(persisted_references),
-                            "calculator_compatibility": dict(compatibility),
-                            "normalization_area_source_status": area_status,
-                            "failure": failure,
-                        },
+                        status="done",
+                        best_energy=float(value),
+                        param1=area_A2,
+                        param2=float(canonical_convention["n_interfaces"]),
+                        n_points=1,
+                        payload=payload,
                     )
-                    persist_followups_with_edges(uow=uow, followups=[failed])
+                    completed.append(followup)
                     stage_results.append(
                         ThermodynamicStageResult(
                             target_uid=target_uid,
                             prototype_uid=prototype_uid,
-                            status="failed",
+                            status="completed",
+                            quantity=quantity,
+                            value_eV_per_A2=float(value),
+                            value_J_per_m2=value_j,
                             run_uid=run.uid_full,
                             followup_uid=followup_uid,
                             raw_energy_followup_uid=raw_uid,
-                            reason=str(exc),
                         )
                     )
-                    continue
 
-                value_j = _finite_float(
-                    float(value) * EV_PER_A2_TO_J_PER_M2,
-                    name="The converted thermodynamic quantity",
-                )
-                payload = {
-                    "schema": THERMODYNAMIC_RESULT_SCHEMA,
-                    "version": ENERGY_RESULT_VERSION,
-                    "result_stage": "thermodynamic_derived",
-                    "source": {
-                        "raw_energy_followup_uid": raw_uid,
-                        "reference_mode": references.get("mode", "static"),
-                        "reference_run_uid_full": references.get(
-                            "reference_run_uid_full"
-                        ),
-                    },
-                    "quantity": {
-                        "name": quantity,
-                        "formula_id": formula,
-                        "value_eV_per_A2": float(value),
-                        "value_J_per_m2": value_j,
-                    },
-                    "normalization": {
-                        "area_A2": area_A2,
-                        "area_source_status": area_status,
-                        "n_interfaces": int(canonical_convention["n_interfaces"]),
-                    },
-                    "convention": dict(canonical_convention),
-                    "references": dict(persisted_references),
-                    "components": components,
-                    "calculator_compatibility": dict(compatibility),
-                    "units": {
-                        "primary": "eV/angstrom^2",
-                        "secondary": "J/m^2",
-                    },
-                }
-                followup = FollowupResult(
-                    uid_full=followup_uid,
-                    id_short=followup_id,
-                    run_uid_full=run.uid_full,
-                    run_id_short=run.id_short,
-                    prototype_uid_full=prototype_uid,
-                    prototype_id_short=uow.ids.ensure_prototype_id(prototype_uid),
-                    target_uid_full=target_uid,
-                    target_kind=raw.target_kind,
-                    kind="thermodynamic_quantity",
-                    status="done",
-                    best_energy=float(value),
-                    param1=area_A2,
-                    param2=float(canonical_convention["n_interfaces"]),
-                    n_points=1,
-                    payload=payload,
-                )
-                completed.append(followup)
-                stage_results.append(
-                    ThermodynamicStageResult(
-                        target_uid=target_uid,
-                        prototype_uid=prototype_uid,
-                        status="completed",
-                        quantity=quantity,
-                        value_eV_per_A2=float(value),
-                        value_J_per_m2=value_j,
-                        run_uid=run.uid_full,
-                        followup_uid=followup_uid,
-                        raw_energy_followup_uid=raw_uid,
-                    )
-                )
-
-            if completed:
-                persist_followups_with_edges(uow=uow, followups=completed)
-                for row in completed:
-                    payload_row = dict(row.payload or {})
-                    source = dict(payload_row["source"])
-                    raw_uid = source.get("raw_energy_followup_uid")
-                    if not raw_uid:
-                        raise ValueError(
-                            f"Thermodynamic follow-up {row.uid_full!r} is missing "
-                            "raw_energy_followup_uid."
-                        )
-                    uow.edges.add(
-                        src_uid_full=str(raw_uid),
-                        dst_uid_full=row.uid_full,
-                        kind="energy_to_thermodynamic",
-                        payload={"formula_id": payload_row["quantity"]["formula_id"]},
-                    )
-                    references_row = dict(payload_row["references"])
-                    reference_result_uids = dict(
-                        references_row.get("result_uids") or {}
-                    )
-                    for reference_kind, reference_uid in sorted(
-                        reference_result_uids.items()
-                    ):
+                if completed:
+                    persist_followups_with_edges(uow=uow, followups=completed)
+                    for row in completed:
+                        payload_row = dict(row.payload or {})
+                        source = dict(payload_row["source"])
+                        raw_uid = source.get("raw_energy_followup_uid")
+                        if not raw_uid:
+                            raise ValueError(
+                                f"Thermodynamic follow-up {row.uid_full!r} is missing "
+                                "raw_energy_followup_uid."
+                            )
                         uow.edges.add(
-                            src_uid_full=str(reference_uid),
+                            src_uid_full=str(raw_uid),
                             dst_uid_full=row.uid_full,
-                            kind="reference_to_thermodynamic",
-                            payload={
-                                "formula_id": payload_row["quantity"]["formula_id"],
-                                "reference_kind": str(reference_kind),
-                            },
+                            kind="energy_to_thermodynamic",
+                            payload={"formula_id": payload_row["quantity"]["formula_id"]},
                         )
+                        references_row = dict(payload_row["references"])
+                        reference_result_uids = dict(
+                            references_row.get("result_uids") or {}
+                        )
+                        for reference_kind, reference_uid in sorted(
+                            reference_result_uids.items()
+                        ):
+                            uow.edges.add(
+                                src_uid_full=str(reference_uid),
+                                dst_uid_full=row.uid_full,
+                                kind="reference_to_thermodynamic",
+                                payload={
+                                    "formula_id": payload_row["quantity"]["formula_id"],
+                                    "reference_kind": str(reference_kind),
+                                },
+                            )
 
-        run = finalize_run_state_and_refresh(
-            self._runs,
-            run,
-            stage_results,
-            n_requested=len(raw_rows),
-        )
-        return run, stage_results
+            run = finalize_run_state_and_refresh(
+                self._runs,
+                run,
+                stage_results,
+                n_requested=len(raw_rows),
+            )
+            return run, stage_results
+        except Exception as exc:
+            self._runs.mark_failed(
+                run.uid_full,
+                error={
+                    "message": str(exc),
+                    "exception_type": type(exc).__name__,
+                    "module": type(exc).__module__,
+                },
+            )
+            raise

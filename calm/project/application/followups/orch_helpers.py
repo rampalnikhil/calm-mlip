@@ -197,8 +197,10 @@ def finalize_run_state_and_refresh(
     run: Run,
     results: list[Any],
     n_requested: int,
+    *,
+    fail_on_any: bool = True,
 ) -> Run:
-    """Persist the exact terminal run state and return the refreshed record."""
+    """Persist a terminal state, keeping mixed failures retryable by default."""
 
     statuses = [
         getattr(result, "status", None)
@@ -208,7 +210,7 @@ def finalize_run_state_and_refresh(
     ]
     n_failed = sum(status == "failed" for status in statuses)
     n_completed = sum(status == "completed" for status in statuses)
-    if n_failed > 0 and n_completed == 0:
+    if n_failed > 0 and (fail_on_any or n_completed == 0):
         runs_service.mark_failed(run.uid_full, error={"n_failed": n_failed})
     else:
         runs_service.mark_done(

@@ -132,7 +132,16 @@ class AffineInvariantStrain2D:
         G2s = sym2(np.asarray(G2, dtype=float))
 
         X = invsqrt_spd(G1s)
-        M = sym2(X @ G2s @ X)
+        # I + X (G2 - G1) X is algebraically the same relative metric.
+        # Forming the difference first preserves exact zero strain for equal
+        # metrics instead of amplifying whitening roundoff by their condition.
+        relative_change = sym2(X @ (G2s - G1s) @ X)
+        if float(np.max(np.sum(np.abs(relative_change), axis=1))) <= 0.5:
+            M = sym2(np.eye(2) + relative_change)
+        else:
+            # Large compression would instead lose the small relative metric
+            # through cancellation in I + relative_change.
+            M = sym2(X @ G2s @ X)
 
         mu = eigvals2_spd(M)
         if np.any(mu <= 0.0):

@@ -403,7 +403,10 @@ class RelaxationOrchestrator:
                 )
                 uow.commit()
 
-        if resume and run.status == "done":
+        if (
+            resume and not partial_resume and run.status == "done"
+            and not (run.progress or {}).get("n_failed", 0)
+        ):
             skipped = [
                 RelaxationStageResult(
                     target_uid=target.get("target_uid_full")
@@ -426,249 +429,260 @@ class RelaxationOrchestrator:
             progress={"stage": "relaxing", "n_requested": len(targets)},
         )
 
-        existing = (
-            self._existing_followups(run_uid_full=run.uid_full)
-            if partial_resume
-            else {}
-        )
-        completed_followups: list[FollowupResult] = []
-        stage_results: list[RelaxationStageResult] = []
+        try:
+            existing = (
+                self._existing_followups(run_uid_full=run.uid_full)
+                if partial_resume
+                else {}
+            )
+            completed_followups: list[FollowupResult] = []
+            stage_results: list[RelaxationStageResult] = []
 
-        with self._uow as uow:
-            for target in targets:
-                prototype_uid_full = target["prototype_uid_full"]
-                target_uid_full = target["target_uid_full"]
-                target_kind = target["target_kind"]
-                key = (prototype_uid_full, target_uid_full)
+            with self._uow as uow:
+                for target in targets:
+                    prototype_uid_full = target["prototype_uid_full"]
+                    target_uid_full = target["target_uid_full"]
+                    target_kind = target["target_kind"]
+                    key = (prototype_uid_full, target_uid_full)
 
-                if key in existing:
-                    row = existing[key]
-                    row_payload = dict(row.payload or {})
+                    if key in existing:
+                        row = existing[key]
+                        row_payload = dict(row.payload or {})
+                        stage_results.append(
+                            RelaxationStageResult(
+                                target_uid=target_uid_full,
+                                target_kind=target_kind,
+                                prototype_uid=prototype_uid_full,
+                                status="skipped",
+                                reason="existing_followup",
+                                run_uid=run.uid_full,
+                                followup_uid=row.uid_full,
+                                relaxed_interface_uid=row_payload.get(
+                                    "relaxed_interface_uid"
+                                )
+                                or row_payload.get("derived_interface_uid"),
+                                artifact_refs=row_payload.get("artifact_refs"),
+                            )
+                        )
+                        continue
+
+                    followup_uid = persisted_followup_uid(
+                        run_uid_full=run.uid_full,
+                        prototype_uid_full=prototype_uid_full,
+                        target_uid_full=target_uid_full,
+                        target_kind=target_kind,
+                        kind="relaxation_stage",
+                    )
+                    followup_id = uow.ids.ensure_short_id(
+                        uid_full=followup_uid,
+                        tag="f",
+                    )
+                    compute_config: dict[str, Any] = {
+                        "max_steps": controls.max_steps,
+                        "protocol": controls.protocol,
+                        "convergence": convergence_dict,
+                        "relax_cell": controls.relax_cell,
+                        "target_kind": target_kind,
+                    }
+                    try:
+                        target_atoms = self._target_atoms_for_backend(
+                            target_uid_full,
+                            target_kind,
+                        )
+                        if target_atoms is not None:
+                            compute_config["target_atoms"] = target_atoms
+                        compute_result = self._backend.compute(
+                            run_uid=run.uid_full,
+                            prototype_uid=prototype_uid_full,
+                            target_uid=target_uid_full,
+                            config=compute_config,
+                            uow=uow,
+                        )
+                        certificate = self._compute_certificate(
+                            compute_result,
+                            controls,
+                        )
+                    except Exception as exc:
+                        warnings.warn(
+                            f"Relaxation backend error for target {target_uid_full}: {exc}",
+                            UserWarning,
+                        )
+                        failed, failed_result = self._failure_followup(
+                            uow=uow,
+                            run=run,
+                            followup_uid=followup_uid,
+                            followup_id=followup_id,
+                            prototype_uid_full=prototype_uid_full,
+                            target_uid_full=target_uid_full,
+                            target_kind=target_kind,
+                            message=str(exc),
+                            backend_identity=backend_identity,
+                            relaxation_settings=user_payload["relax_settings"],
+                            exception=exc,
+                        )
+                        persist_followups_with_edges(uow=uow, followups=[failed])
+                        stage_results.append(failed_result)
+                        continue
+
+                    artifact_refs = persist_artifact_payloads(
+                        uow=uow,
+                        run_uid=run.uid_full,
+                        proto_uid=prototype_uid_full,
+                        target_uid=target_uid_full,
+                        artifact_payloads=compute_result.artifact_payloads,
+                        artifacts=self._artifacts,
+                    )
+                    if not certificate["converged"]:
+                        message = (
+                            "Structural relaxation did not satisfy the requested "
+                            "optimizer-residual tolerance within the step budget."
+                        )
+                        failed, failed_result = self._failure_followup(
+                            uow=uow,
+                            run=run,
+                            followup_uid=followup_uid,
+                            followup_id=followup_id,
+                            prototype_uid_full=prototype_uid_full,
+                            target_uid_full=target_uid_full,
+                            target_kind=target_kind,
+                            message=message,
+                            backend_identity=backend_identity,
+                            relaxation_settings=user_payload["relax_settings"],
+                            diagnostics=certificate,
+                        )
+                        failed.payload["artifact_refs"] = list(artifact_refs)
+                        failed.payload["summary"] = dict(
+                            getattr(compute_result, "summary", {}) or {}
+                        )
+                        persist_followups_with_edges(uow=uow, followups=[failed])
+                        failed_result.artifact_refs = artifact_refs
+                        stage_results.append(failed_result)
+                        continue
+
+                    try:
+                        relaxed_interface_uid, interface_artifact_refs = (
+                            self._derive_relaxed_interface(
+                                uow=uow,
+                                run=run,
+                                followup_uid=followup_uid,
+                                prototype_uid_full=prototype_uid_full,
+                                target_uid_full=target_uid_full,
+                                target_kind=target_kind,
+                                compute_result=compute_result,
+                                user_payload=user_payload,
+                            )
+                        )
+                    except Exception as exc:
+                        message = f"Could not persist relaxed interface: {exc}"
+                        failed, failed_result = self._failure_followup(
+                            uow=uow,
+                            run=run,
+                            followup_uid=followup_uid,
+                            followup_id=followup_id,
+                            prototype_uid_full=prototype_uid_full,
+                            target_uid_full=target_uid_full,
+                            target_kind=target_kind,
+                            message=message,
+                            backend_identity=backend_identity,
+                            relaxation_settings=user_payload["relax_settings"],
+                            diagnostics=certificate,
+                            exception=exc,
+                        )
+                        failed.payload["artifact_refs"] = list(artifact_refs)
+                        failed.payload["summary"] = dict(
+                            getattr(compute_result, "summary", {}) or {}
+                        )
+                        persist_followups_with_edges(uow=uow, followups=[failed])
+                        failed_result.artifact_refs = artifact_refs
+                        stage_results.append(failed_result)
+                        continue
+                    for artifact_uid in interface_artifact_refs:
+                        if artifact_uid not in artifact_refs:
+                            artifact_refs.append(artifact_uid)
+                    payload_row = {
+                        "target_uid_full": target_uid_full,
+                        "target_kind": target_kind,
+                        "relaxed_interface_uid": relaxed_interface_uid,
+                        "derived_interface_uid": relaxed_interface_uid,
+                        "artifact_refs": artifact_refs,
+                        "final_energy_eV": certificate["final_energy_eV"],
+                        "n_steps": certificate["n_steps"],
+                        "converged": certificate["converged"],
+                        "optimizer_reported_converged": certificate[
+                            "optimizer_reported_converged"
+                        ],
+                        "residual_satisfied": certificate["residual_satisfied"],
+                        "max_force_eV_per_A": certificate["max_atomic_force_eV_per_A"],
+                        "max_optimizer_residual": certificate["max_optimizer_residual"],
+                        "relaxation_backend": self._backend_name,
+                        "backend_identity": dict(backend_identity),
+                        "relaxation_settings": user_payload["relax_settings"],
+                        "convergence_certificate": dict(certificate),
+                        "summary": dict(compute_result.summary or {}),
+                    }
+                    followup = FollowupResult(
+                        uid_full=followup_uid,
+                        id_short=followup_id,
+                        run_uid_full=run.uid_full,
+                        run_id_short=run.id_short,
+                        prototype_uid_full=prototype_uid_full,
+                        prototype_id_short=uow.ids.ensure_prototype_id(prototype_uid_full),
+                        target_uid_full=target_uid_full,
+                        target_kind=target_kind,
+                        kind="relaxation_stage",
+                        status="done",
+                        best_energy=certificate["final_energy_eV"],
+                        param1=certificate["max_atomic_force_eV_per_A"],
+                        param2=1.0,
+                        n_points=certificate["n_steps"],
+                        payload=payload_row,
+                    )
+                    completed_followups.append(followup)
                     stage_results.append(
                         RelaxationStageResult(
                             target_uid=target_uid_full,
                             target_kind=target_kind,
                             prototype_uid=prototype_uid_full,
-                            status="skipped",
-                            reason="existing_followup",
+                            status="completed",
                             run_uid=run.uid_full,
-                            followup_uid=row.uid_full,
-                            relaxed_interface_uid=row_payload.get(
-                                "relaxed_interface_uid"
-                            )
-                            or row_payload.get("derived_interface_uid"),
-                            artifact_refs=row_payload.get("artifact_refs"),
-                        )
-                    )
-                    continue
-
-                followup_uid = persisted_followup_uid(
-                    run_uid_full=run.uid_full,
-                    prototype_uid_full=prototype_uid_full,
-                    target_uid_full=target_uid_full,
-                    target_kind=target_kind,
-                    kind="relaxation_stage",
-                )
-                followup_id = uow.ids.ensure_short_id(
-                    uid_full=followup_uid,
-                    tag="f",
-                )
-                compute_config: dict[str, Any] = {
-                    "max_steps": controls.max_steps,
-                    "protocol": controls.protocol,
-                    "convergence": convergence_dict,
-                    "relax_cell": controls.relax_cell,
-                    "target_kind": target_kind,
-                }
-                try:
-                    target_atoms = self._target_atoms_for_backend(
-                        target_uid_full,
-                        target_kind,
-                    )
-                    if target_atoms is not None:
-                        compute_config["target_atoms"] = target_atoms
-                    compute_result = self._backend.compute(
-                        run_uid=run.uid_full,
-                        prototype_uid=prototype_uid_full,
-                        target_uid=target_uid_full,
-                        config=compute_config,
-                        uow=uow,
-                    )
-                    certificate = self._compute_certificate(
-                        compute_result,
-                        controls,
-                    )
-                except Exception as exc:
-                    warnings.warn(
-                        f"Relaxation backend error for target {target_uid_full}: {exc}",
-                        UserWarning,
-                    )
-                    failed, failed_result = self._failure_followup(
-                        uow=uow,
-                        run=run,
-                        followup_uid=followup_uid,
-                        followup_id=followup_id,
-                        prototype_uid_full=prototype_uid_full,
-                        target_uid_full=target_uid_full,
-                        target_kind=target_kind,
-                        message=str(exc),
-                        backend_identity=backend_identity,
-                        relaxation_settings=user_payload["relax_settings"],
-                        exception=exc,
-                    )
-                    persist_followups_with_edges(uow=uow, followups=[failed])
-                    stage_results.append(failed_result)
-                    continue
-
-                artifact_refs = persist_artifact_payloads(
-                    uow=uow,
-                    run_uid=run.uid_full,
-                    proto_uid=prototype_uid_full,
-                    target_uid=target_uid_full,
-                    artifact_payloads=compute_result.artifact_payloads,
-                    artifacts=self._artifacts,
-                )
-                if not certificate["converged"]:
-                    message = (
-                        "Structural relaxation did not satisfy the requested "
-                        "optimizer-residual tolerance within the step budget."
-                    )
-                    failed, failed_result = self._failure_followup(
-                        uow=uow,
-                        run=run,
-                        followup_uid=followup_uid,
-                        followup_id=followup_id,
-                        prototype_uid_full=prototype_uid_full,
-                        target_uid_full=target_uid_full,
-                        target_kind=target_kind,
-                        message=message,
-                        backend_identity=backend_identity,
-                        relaxation_settings=user_payload["relax_settings"],
-                        diagnostics=certificate,
-                    )
-                    failed.payload["artifact_refs"] = list(artifact_refs)
-                    failed.payload["summary"] = dict(
-                        getattr(compute_result, "summary", {}) or {}
-                    )
-                    persist_followups_with_edges(uow=uow, followups=[failed])
-                    failed_result.artifact_refs = artifact_refs
-                    stage_results.append(failed_result)
-                    continue
-
-                try:
-                    relaxed_interface_uid, interface_artifact_refs = (
-                        self._derive_relaxed_interface(
-                            uow=uow,
-                            run=run,
                             followup_uid=followup_uid,
-                            prototype_uid_full=prototype_uid_full,
-                            target_uid_full=target_uid_full,
-                            target_kind=target_kind,
-                            compute_result=compute_result,
-                            user_payload=user_payload,
+                            relaxed_interface_uid=relaxed_interface_uid,
+                            artifact_refs=artifact_refs,
                         )
                     )
-                except Exception as exc:
-                    message = f"Could not persist relaxed interface: {exc}"
-                    failed, failed_result = self._failure_followup(
+
+                if completed_followups:
+                    persist_followups_with_edges(
                         uow=uow,
-                        run=run,
-                        followup_uid=followup_uid,
-                        followup_id=followup_id,
-                        prototype_uid_full=prototype_uid_full,
-                        target_uid_full=target_uid_full,
-                        target_kind=target_kind,
-                        message=message,
-                        backend_identity=backend_identity,
-                        relaxation_settings=user_payload["relax_settings"],
-                        diagnostics=certificate,
-                        exception=exc,
+                        followups=completed_followups,
                     )
-                    failed.payload["artifact_refs"] = list(artifact_refs)
-                    failed.payload["summary"] = dict(
-                        getattr(compute_result, "summary", {}) or {}
-                    )
-                    persist_followups_with_edges(uow=uow, followups=[failed])
-                    failed_result.artifact_refs = artifact_refs
-                    stage_results.append(failed_result)
-                    continue
-                for artifact_uid in interface_artifact_refs:
-                    if artifact_uid not in artifact_refs:
-                        artifact_refs.append(artifact_uid)
-                payload_row = {
-                    "target_uid_full": target_uid_full,
-                    "target_kind": target_kind,
-                    "relaxed_interface_uid": relaxed_interface_uid,
-                    "derived_interface_uid": relaxed_interface_uid,
-                    "artifact_refs": artifact_refs,
-                    "final_energy_eV": certificate["final_energy_eV"],
-                    "n_steps": certificate["n_steps"],
-                    "converged": certificate["converged"],
-                    "optimizer_reported_converged": certificate[
-                        "optimizer_reported_converged"
-                    ],
-                    "residual_satisfied": certificate["residual_satisfied"],
-                    "max_force_eV_per_A": certificate["max_atomic_force_eV_per_A"],
-                    "max_optimizer_residual": certificate["max_optimizer_residual"],
-                    "relaxation_backend": self._backend_name,
-                    "backend_identity": dict(backend_identity),
-                    "relaxation_settings": user_payload["relax_settings"],
-                    "convergence_certificate": dict(certificate),
-                    "summary": dict(compute_result.summary or {}),
-                }
-                followup = FollowupResult(
-                    uid_full=followup_uid,
-                    id_short=followup_id,
-                    run_uid_full=run.uid_full,
-                    run_id_short=run.id_short,
-                    prototype_uid_full=prototype_uid_full,
-                    prototype_id_short=uow.ids.ensure_prototype_id(prototype_uid_full),
-                    target_uid_full=target_uid_full,
-                    target_kind=target_kind,
-                    kind="relaxation_stage",
-                    status="done",
-                    best_energy=certificate["final_energy_eV"],
-                    param1=certificate["max_atomic_force_eV_per_A"],
-                    param2=1.0,
-                    n_points=certificate["n_steps"],
-                    payload=payload_row,
-                )
-                completed_followups.append(followup)
-                stage_results.append(
-                    RelaxationStageResult(
-                        target_uid=target_uid_full,
-                        target_kind=target_kind,
-                        prototype_uid=prototype_uid_full,
-                        status="completed",
-                        run_uid=run.uid_full,
-                        followup_uid=followup_uid,
-                        relaxed_interface_uid=relaxed_interface_uid,
-                        artifact_refs=artifact_refs,
-                    )
-                )
+                    for followup in completed_followups:
+                        relaxed_uid = (followup.payload or {}).get("relaxed_interface_uid")
+                        if relaxed_uid:
+                            uow.edges.add(
+                                src_uid_full=followup.uid_full,
+                                dst_uid_full=str(relaxed_uid),
+                                kind="followup_to_interface",
+                                payload={"stage": "relaxed"},
+                            )
 
-            if completed_followups:
-                persist_followups_with_edges(
-                    uow=uow,
-                    followups=completed_followups,
-                )
-                for followup in completed_followups:
-                    relaxed_uid = (followup.payload or {}).get("relaxed_interface_uid")
-                    if relaxed_uid:
-                        uow.edges.add(
-                            src_uid_full=followup.uid_full,
-                            dst_uid_full=str(relaxed_uid),
-                            kind="followup_to_interface",
-                            payload={"stage": "relaxed"},
-                        )
-
-        for result in unresolved_results:
-            result.run_uid = run.uid_full
-        stage_results.extend(unresolved_results)
-        run = finalize_run_state_and_refresh(
-            self._runs,
-            run,
-            stage_results,
-            n_requested=len(targets),
-        )
-        return run, stage_results
+            for result in unresolved_results:
+                result.run_uid = run.uid_full
+            stage_results.extend(unresolved_results)
+            run = finalize_run_state_and_refresh(
+                self._runs,
+                run,
+                stage_results,
+                n_requested=len(targets),
+            )
+            return run, stage_results
+        except Exception as exc:
+            self._runs.mark_failed(
+                run.uid_full,
+                error={
+                    "message": str(exc),
+                    "exception_type": type(exc).__name__,
+                    "module": type(exc).__module__,
+                },
+            )
+            raise

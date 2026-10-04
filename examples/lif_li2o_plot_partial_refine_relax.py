@@ -47,8 +47,8 @@ from calm import open_project
 SCRIPT_DIR = Path(__file__).resolve().parent
 WORK_DIR = SCRIPT_DIR / "work" / "lif-li2o-low-index-pareto"
 PROJECT_DIR = WORK_DIR / "lif-li2o-low-index-grace.calm"
-RESULTS_DIR = WORK_DIR / "outputs-grace" / "refine-relax"
-CANDIDATE_TABLE = WORK_DIR / "outputs-grace" / "candidates-all.csv"
+RESULTS_DIR = WORK_DIR / "outputs-grace-eps020" / "refine-relax"
+CANDIDATE_TABLE = WORK_DIR / "outputs-grace-eps020" / "candidates-all.csv"
 OUTPUT_DIR = RESULTS_DIR / "partial-plots"
 
 EXPECTED_REGISTRY_OBJECTIVE = (
@@ -843,11 +843,14 @@ def plot_relaxation_summary(
     if not rows:
         return
     fig, ax = plt.subplots(figsize=figure_size(show_legend=show_legend))
+    grouped: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
     for row in rows:
-        miller_a, miller_b = orientation_from_search(str(row["search_name"]))
+        grouped[str(row["search_name"])].append(row)
+    for name, group in grouped.items():
+        miller_a, miller_b = orientation_from_search(name)
         ax.scatter(
-            [float(row[x_key])],
-            [float(row["relaxation_energy_eV_per_atom"])],
+            [float(row[x_key]) for row in group],
+            [float(row["relaxation_energy_eV_per_atom"]) for row in group],
             s=CANDIDATE_SIZE,
             marker=LI2O_MARKERS[miller_b],
             facecolor=LIF_COLORS[miller_a],
@@ -866,10 +869,7 @@ def plot_relaxation_summary(
     ax.set_ylim(*y_limits_with_zero(y_values))
     ax.axhline(0.0, color="0.35", linewidth=0.8, zorder=1)
     ax.set_xlabel(x_label)
-    ax.set_ylabel(
-        r"Relaxation energy per atom, $\Delta E_\mathrm{relax}/N$ "
-        r"(eV atom$^{-1}$)"
-    )
+    ax.set_ylabel(r"Relaxation energy (eV atom$^{-1}$)")
     ax.xaxis.set_major_locator(MaxNLocator(nbins=5))
     ax.xaxis.set_major_formatter(PercentFormatter(xmax=1.0, decimals=1))
     ax.yaxis.set_major_locator(MaxNLocator(nbins=5))

@@ -282,6 +282,40 @@ class ProjectMaterialOptimizationService:
         source_label = self._label(material)
         destination_label = name or source_label
         spec = self._potential_spec(potential)
+        if potential is not None and calculator is not None:
+            raise TypeError(
+                "Provide exactly one of potential= or calculator= for bulk optimization."
+            )
+        if spec is None:
+            from calm.calculators.identity import get_calculator_spec
+
+            if calculator is None:
+                raise ValueError("Bulk optimization requires potential=... or calculator=....")
+            spec = get_calculator_spec(calculator)
+
+        # Check an existing project's calculator policy before expensive work.
+        from calm.public.inputs.project_config import load_configuration
+        from calm.project.domain.identity_v2 import (
+            calculator_identity_payload,
+            persisted_entity_uid_v2,
+        )
+
+        configuration = load_configuration(self._project)
+        current_mlip = configuration.get("default_mlip")
+        if current_mlip and str(current_mlip).strip().lower() != spec.family:
+            raise RuntimeError(
+                f"Project already uses MLIP {current_mlip!r}; "
+                f"cannot replace it with {spec.family!r}."
+            )
+        expected_uid = persisted_entity_uid_v2(
+            "calculator", calculator_identity_payload(spec=spec.to_dict()),
+        )
+        current_uid = configuration.get("default_calculator_uid_full")
+        if current_uid and current_uid != expected_uid:
+            raise RuntimeError(
+                "Project already uses a different calculator identity; "
+                "create a new project to change calculators."
+            )
         with rep.stage(f"Optimize material: {source_label} -> {destination_label}"):
             optimized = self._optimize_structure(
                 material,

@@ -115,6 +115,16 @@ class BulksService:
         optimized_with: CalculatorSpec | str | None,
     ) -> tuple[str | None, str | None]:
         require_entered_uow(uow, owner="BulksService")
+        if isinstance(optimized_with, str) and optimized_with.startswith("calc:"):
+            # Public material projections retain this exact UID. Never turn it
+            # into a default family:model spec, which would lose provider options.
+            calculator = uow.calculators.get_by_uid_full(optimized_with)
+            if calculator is None:
+                raise ValueError(
+                    f"Optimization calculator is not registered: {optimized_with}. "
+                    "Provide its full CalculatorSpec when importing from another project."
+                )
+            return calculator.uid_full, f"{calculator.family}:{calculator.model}"
         spec = cls._calculator_spec(optimized_with)
         if spec is None:
             return None, None
@@ -197,7 +207,7 @@ class BulksService:
             ),
         )
 
-    def list_bulks(self, *, limit: int = 50) -> list[BulkSummary]:
+    def list_bulks(self, *, limit: int | None = None) -> list[BulkSummary]:
         """List persisted bulk summaries."""
 
         with fresh_uow(self._uow_factory, owner="BulksService") as uow:

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import subprocess
+import sys
+import textwrap
 
 from benchmarks.benchmarks.claims.claim_ids import ClaimId, ordered_claim_ids
 from benchmarks.benchmarks.claims.schemas import (
@@ -89,6 +92,38 @@ def test_claim_scaffold_does_not_import_calm_or_pymatgen_at_module_load() -> Non
     imported = set().union(*(_top_level_import_roots(path) for path in paths))
     assert "calm" not in imported
     assert "pymatgen" not in imported
+
+
+def test_claim_scaffold_imports_without_calm_or_pymatgen() -> None:
+    code = textwrap.dedent(
+        """
+        import importlib
+        import importlib.abc
+        from pathlib import Path
+        import sys
+
+        class BlockScientificImports(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname.split(".", 1)[0] in {"calm", "pymatgen"}:
+                    raise AssertionError(f"Unexpected eager import: {fullname}")
+                return None
+
+        sys.meta_path.insert(0, BlockScientificImports())
+        importlib.import_module("benchmarks.benchmarks.run_claim_suite")
+        for path in sorted(Path("benchmarks/benchmarks/claims").glob("*.py")):
+            importlib.import_module(f"benchmarks.benchmarks.claims.{path.stem}")
+        assert "calm" not in sys.modules
+        assert "pymatgen" not in sys.modules
+        """
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=REPOSITORY_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def test_benchmark_readme_documents_incremental_claim_execution() -> None:

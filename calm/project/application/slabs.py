@@ -631,7 +631,7 @@ class SlabsService:
         self,
         *,
         bulk_id: str | None = None,
-        limit: int = 50,
+        limit: int | None = None,
     ) -> list[SlabSummary]:
         with fresh_uow(self._uow_factory, owner="SlabsService") as uow:
             bulk_uid_full = uow.ids.resolve(bulk_id) if bulk_id else None

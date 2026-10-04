@@ -137,9 +137,10 @@ def compute_strain_2d(
     E_A_rms = float(np.sqrt(0.5) * np.linalg.norm(E_A2, ord="fro"))
     E_B_rms = float(np.sqrt(0.5) * np.linalg.norm(E_B2, ord="fro"))
 
-    def embed_2x2_to_3x3(A2: np.ndarray) -> np.ndarray:
+    def embed_2x2_to_3x3(A2: np.ndarray, *, normal: float = 1.0) -> np.ndarray:
         A3 = np.eye(3, dtype=float)
         A3[:2, :2] = np.asarray(A2, dtype=float)
+        A3[2, 2] = normal
         return A3
 
     return StrainState(
@@ -148,11 +149,11 @@ def compute_strain_2d(
         F_A=embed_2x2_to_3x3(F_A2),
         R_A=embed_2x2_to_3x3(R_A2),
         U_A=embed_2x2_to_3x3(U_A2),
-        E_A=embed_2x2_to_3x3(E_A2),
+        E_A=embed_2x2_to_3x3(E_A2, normal=0.0),
         E_A_rms=E_A_rms,
         F_B=embed_2x2_to_3x3(F_B2),
         R_B=embed_2x2_to_3x3(R_B2),
         U_B=embed_2x2_to_3x3(U_B2),
-        E_B=embed_2x2_to_3x3(E_B2),
+        E_B=embed_2x2_to_3x3(E_B2, normal=0.0),
         E_B_rms=E_B_rms,
     )

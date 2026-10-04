@@ -27,17 +27,12 @@ from dataclasses import dataclass, field
 from functools import reduce
 from math import gcd
 from numbers import Integral, Real
-from typing import Any, Literal, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 
 import numpy as np
 
-from calm.interface.matching._pair_identity import canonicalize_primitive_pair_2d
-from calm.interface.matching._types import PairIdentityPolicy2D
-from calm.math2d.paired_lattice import (
-    canonicalize_common_right_rank2,
-    primitiveize_pair_matrix_2d,
-)
-from calm.symmetry.reduction import canonical_gauss_reduce_2d
+if TYPE_CHECKING:
+    from calm.interface.matching._types import PairIdentityPolicy2D
 
 
 MethodKind = Literal["equivalence", "heuristic_grouping", "filter", "selector"]
@@ -578,6 +573,8 @@ def _det2(matrix: np.ndarray) -> int:
 
 
 def _default_policy() -> PairIdentityPolicy2D:
+    from calm.interface.matching._types import PairIdentityPolicy2D
+
     return PairIdentityPolicy2D(
         pair_symmetry="full",
         correspondence_orientation="proper",
@@ -593,6 +590,13 @@ def calm_stage_keys(
     policy: PairIdentityPolicy2D | None = None,
 ) -> AdapterOutcome:
     """Return CALM's exact source, saturation, common-right, and final keys."""
+
+    from calm.interface.matching._pair_identity import canonicalize_primitive_pair_2d
+    from calm.interface.matching._types import PairIdentityPolicy2D
+    from calm.math2d.paired_lattice import (
+        canonicalize_common_right_rank2,
+        primitiveize_pair_matrix_2d,
+    )
 
     item = _entry(record)
     selected_policy = _default_policy() if policy is None else policy
@@ -674,6 +678,8 @@ def _independently_reduced_gram(
     *,
     reduction_tolerance: float,
 ) -> np.ndarray:
+    from calm.symmetry.reduction import canonical_gauss_reduce_2d
+
     reduced, _unimodular, _embedding = canonical_gauss_reduce_2d(
         _intrinsic_basis(gram),
         tol=reduction_tolerance,

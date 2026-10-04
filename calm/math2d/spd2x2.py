@@ -262,25 +262,27 @@ def sqrt_spd(G: np.ndarray) -> np.ndarray:
 
 
 def invsqrt_spd(G: np.ndarray) -> np.ndarray:
-    """Inverse principal square root for 2×2 SPD (eigenvalue-only, no matmul)."""
+    """Inverse principal square root for 2×2 SPD without affine cancellation."""
     G = check_spd2(G, tol=0.0, symmetrize=True)
 
     w = eigvals2_spd(G)
     if np.any(w <= 0.0):
         raise ValueError(f"invsqrt_spd: G must be SPD; eigenvalues={w}")
 
-    w0 = float(w[0])
-    w1 = float(w[1])
-
-    s0 = float(np.sqrt(w0))
-    s1 = float(np.sqrt(w1))
-    invs0 = 1.0 / s0
-
-    # Stable divided difference for invsqrt:
-    # (1/s1 - 1/s0)/(w1 - w0) = -1 / ((s0+s1)*s0*s1)
-    beta = -1.0 / ((s0 + s1) * s0 * s1)
-    alpha = invs0 - beta * w0
-    return _affine_combo_sym2(G, alpha, beta)
+    # G^(-1/2) = (adj(G) + sqrt(det(G))*I) /
+    #            (sqrt(det(G)) * (sqrt(w0) + sqrt(w1))).
+    # Unlike alpha*I + beta*G, both diagonal numerators are sums of
+    # positive values, so elongated cells do not lose precision by cancellation.
+    s0, s1 = float(np.sqrt(w[0])), float(np.sqrt(w[1]))
+    root_det = s0 * s1
+    numerator = np.array(
+        [
+            [G[1, 1] + root_det, -G[0, 1]],
+            [-G[1, 0], G[0, 0] + root_det],
+        ],
+        dtype=float,
+    )
+    return sym2((numerator / root_det) / (s0 + s1))
 
 
 def _power_spd_from_spectrum(

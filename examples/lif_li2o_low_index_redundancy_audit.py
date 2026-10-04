@@ -30,8 +30,8 @@ from calm import open_project
 SCRIPT_DIR = Path(__file__).resolve().parent
 WORK_DIR = SCRIPT_DIR / "work" / "lif-li2o-low-index-pareto"
 DEFAULT_PROJECT_DIR = WORK_DIR / "lif-li2o-low-index-grace.calm"
-DEFAULT_OUTPUT_DIR = WORK_DIR / "outputs-grace" / "redundancy-audit"
-DEFAULT_SEARCH_PREFIX = "lif-li2o-low-index-v1"
+DEFAULT_OUTPUT_DIR = WORK_DIR / "outputs-grace-eps020" / "redundancy-audit"
+DEFAULT_SEARCH_PREFIX = "lif-li2o-low-index-eps020-v1"
 MILLERS = ((1, 0, 0), (1, 1, 0), (1, 1, 1))
 
 SUMMARY_SCHEMA = "calm.lif_li2o_low_index_redundancy_audit/v1"

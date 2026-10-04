@@ -14,7 +14,7 @@ cross-panel reference.
 
 Run ``lif_li2o_low_index_pareto.py`` first so the shared project contains all
 nine completed searches. Generated files are written below
-``WORK_DIR / "outputs-grace"``.
+``WORK_DIR / "outputs-grace-eps020"``.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from pathlib import Path
 
 from calm import open_project
 from matplotlib.lines import Line2D
-from matplotlib.ticker import MultipleLocator, PercentFormatter
+from matplotlib.ticker import MaxNLocator, PercentFormatter
 
 
 # -----------------------------------------------------------------------------
@@ -34,7 +34,7 @@ from matplotlib.ticker import MultipleLocator, PercentFormatter
 SCRIPT_DIR = Path(__file__).resolve().parent
 WORK_DIR = SCRIPT_DIR / "work" / "lif-li2o-low-index-pareto"
 PROJECT_DIR = WORK_DIR / "lif-li2o-low-index-grace.calm"
-OUTPUT_DIR = WORK_DIR / "outputs-grace"
+OUTPUT_DIR = WORK_DIR / "outputs-grace-eps020"
 
 MILLERS = (
     (1, 0, 0),
@@ -42,8 +42,8 @@ MILLERS = (
     (1, 1, 1),
 )
 
-SEARCH_PREFIX = "lif-li2o-low-index-v1"
-MAX_PRINCIPAL_STRAIN = 0.03
+SEARCH_PREFIX = "lif-li2o-low-index-eps020-v1"
+MAX_PRINCIPAL_STRAIN = 0.20
 
 
 # -----------------------------------------------------------------------------
@@ -332,8 +332,8 @@ def main() -> None:
     component_limit = 1.02 * component_bound
     ax.set_xlim(-lower_axis_padding, component_limit)
     ax.set_ylim(-lower_axis_padding, component_limit)
-    ax.xaxis.set_major_locator(MultipleLocator(0.01))
-    ax.yaxis.set_major_locator(MultipleLocator(0.01))
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=6))
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=6))
     ax.xaxis.set_major_formatter(PercentFormatter(xmax=1.0, decimals=0))
     ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0, decimals=0))
 

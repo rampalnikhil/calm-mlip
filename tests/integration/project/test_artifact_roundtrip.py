@@ -64,3 +64,40 @@ def test_resolve_uri_rejects_noncanonical_paths(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="mode must be one of"):
         ws.open_artifact("file:///tmp/output.txt", mode="r")
+
+
+def test_reused_artifact_filename_preserves_old_refs_after_reopen(tmp_path: Path) -> None:
+    from calm.project.bootstrap import open_workspace
+
+    workspace = open_workspace(root=tmp_path)
+    run = workspace.create_run(run_type="unit_test", spec={})
+    first = workspace.put_log(run.id_short, text="first\n")
+    second = workspace.put_log(run.id_short, text="second\n")
+    assert first.uid_full != second.uid_full
+    assert first.uri != second.uri
+    repeated = workspace.put_log(run.id_short, text="second\n")
+    assert repeated.uid_full == second.uid_full
+    reopened = open_workspace(root=tmp_path)
+    assert reopened.open_artifact(first, mode="text") == "first\n"
+    assert reopened.open_artifact(second, mode="text") == "second\n"
+    assert len(reopened.list_artifacts(run.id_short)) == 2
+
+
+def test_failed_artifact_row_write_cannot_replace_published_bytes(tmp_path: Path, monkeypatch) -> None:
+    import pytest
+
+    from calm.project.bootstrap import open_workspace
+    from calm.project.infrastructure.db.repos import SqlAlchemyArtifactRepository
+
+    workspace = open_workspace(root=tmp_path)
+    run = workspace.create_run(run_type="unit_test", spec={})
+    first = workspace.put_log(run.id_short, text="first\n")
+
+    def fail_add(self, artifact):
+        raise RuntimeError("simulated database failure")
+
+    monkeypatch.setattr(SqlAlchemyArtifactRepository, "add", fail_add)
+    with pytest.raises(RuntimeError, match="simulated database failure"):
+        workspace.put_log(run.id_short, text="second\n")
+    assert workspace.open_artifact(first, mode="text") == "first\n"
+    assert len(workspace.list_artifacts(run.id_short)) == 1

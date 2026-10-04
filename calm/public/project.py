@@ -1291,7 +1291,9 @@ class Project:
             material (Material | str): Public material or exact persisted selector.
             potential (Potential | None): Optional typed potential specification.
             calculator (Any | None): Optional explicit ASE-compatible calculator.
-                Do not supply both an incompatible calculator and potential.
+                ASE EMT, LennardJones, and MorsePotential preserve their parameters.
+                Other calculators must declare ``calm_spec`` as a CalculatorSpec
+                or its exact mapping. Supply only one of calculator and potential.
             fmax: Required maximum residual force, in eV/Å. Default: ``0.03``.
             steps: Maximum optimizer steps. Default: ``500``.
             relax_cell: Permit bulk cell degrees of freedom. Default: ``True``.

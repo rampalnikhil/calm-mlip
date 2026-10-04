@@ -98,7 +98,7 @@ class Bulk:
 
     @property
     def natoms(self) -> Optional[int]:
-        n = self.derived.get("natoms")
+        n = self.derived.get("n_atoms")
         return int(n) if isinstance(n, (int, float)) else None
 
 

@@ -57,6 +57,10 @@ class SqlAlchemyIdResolver(IdResolver):
 
     def __init__(self, conn: Connection) -> None:
         self._conn = conn
+        # One resolver is created per outer unit of work. Reserve allocations
+        # immediately: services may prepare an entire batch before inserting it.
+        self._reserved: dict[str, str] = {}
+        self._allocated: dict[tuple[str, str], str] = {}
 
         # Tag -> table mapping. Extend as new entities are introduced.
         self._tag_tables = {
@@ -94,6 +98,11 @@ class SqlAlchemyIdResolver(IdResolver):
                 )
 
             table = self._table_for_tag(tag)
+            exact = self._conn.execute(
+                select(table.c.uid_full).where(table.c.id_short == ident)
+            ).scalar_one_or_none()
+            if exact is not None:
+                return str(exact)
             matches = (
                 self._conn.execute(
                     select(table.c.uid_full).where(
@@ -150,16 +159,27 @@ class SqlAlchemyIdResolver(IdResolver):
         max_prefix_len: int = 12,
     ) -> str:
         table = self._table_for_tag(tag)
+        stored = self._conn.execute(
+            select(table.c.id_short).where(table.c.uid_full == uid_full)
+        ).scalar_one_or_none()
+        if stored is not None:
+            return str(stored)
+        key = (tag, uid_full)
+        if key in self._allocated:
+            return self._allocated[key]
 
         for pref_len in range(min_prefix_len, max_prefix_len + 1):
             candidate = format_short_id(tag=tag, uid_full=uid_full, prefix_len=pref_len)
+            reserved = self._reserved.get(candidate)
+            if reserved is not None and reserved != uid_full:
+                continue
             existing = self._conn.execute(
                 select(table.c.uid_full).where(table.c.id_short == candidate)
             ).scalar_one_or_none()
 
-            if existing is None:
-                return candidate
-            if str(existing) == uid_full:
+            if existing is None or str(existing) == uid_full:
+                self._reserved[candidate] = uid_full
+                self._allocated[key] = candidate
                 return candidate
 
         raise ValueError(

@@ -864,6 +864,8 @@ def _prepare_coupled_match_search(
         d_size_max=_compute_d_size(float(atom_limit), n_a, n_b),
         index_pairs=index_pairs,
     )
+    if _search_context_trace_is_active():
+        _emit_search_context(_build_search_trace_context(plan))
     return plan, _CoupledMatchSearchState(audit=audit)
 
 
@@ -1223,8 +1225,6 @@ def enumerate_coupled_match_classes_core(
         point_group_b=point_group_B,
         audit=audit,
     )
-    if _search_context_trace_is_active():
-        _emit_search_context(_build_search_trace_context(plan))
     for k_a, k_b in plan.index_pairs:
         _traverse_scheduled_index_pair(
             plan,
