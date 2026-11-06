@@ -101,11 +101,13 @@ geometry tutorials.
 
 ### Calculator-provider environments
 
-Registered calculator families are `ase`, `chgnet`, `grace`, `mace`, and
-`lammps`. Registration, dependency availability, qualification evidence, and
-scientific suitability are separate concerns.
-
-Additional registered calculator families are `sevenn` (SevenNet), `mattersim` (MatterSim), `orb` (Orb), `matgl` (MatGL/M3GNet-architecture), `nequip` (NequIP/Allegro), `uma` (Meta/FAIR-Chem UMA), and `petmad` (PET-MAD).
+Twelve calculator families are registered: `ase`, `lammps`, and the
+machine-learned interatomic potentials `chgnet` (CHGNet), `grace` (GRACE),
+`mace` (MACE), `matgl` (MatGL / M3GNet architecture), `mattersim` (MatterSim),
+`nequip` (NequIP and Allegro), `orb` (Orb), `petmad` (PET-MAD), `sevenn`
+(SevenNet), and `uma` (Meta FAIR-Chem UMA). Registration, dependency
+availability, qualification evidence, and scientific suitability are separate
+concerns.
 
 The baseline `ase` and `lammps` boundaries start from `calm-science.yml`;
 LAMMPS additionally requires an external runtime and compatible potential
